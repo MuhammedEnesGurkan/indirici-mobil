@@ -17,6 +17,8 @@ class ParserTest {
         assertEquals("Kuruluş Osman", b.series); assertEquals(150, b.episode)
         val c = EpisodeParser.parse("Yalı Çapkını 2. Sezon 14. Bölüm")
         assertEquals("Yalı Çapkını", c.series); assertEquals(2, c.season); assertEquals(14, c.episode)
+        val w = EpisodeParser.parse("Dizipal The Walking Dead 1.Sezon 1.Bölüm izle | Türkçe Dublaj ve Altyazılı", "dizipal1234.com")
+        assertEquals("The Walking Dead", w.series); assertEquals(1, w.season); assertEquals(1, w.episode)
         val d = EpisodeParser.parse("Inception (2010) 1080p.mkv")
         assertFalse(d.isEpisode); assertEquals("Inception", d.series); assertEquals("2010", d.year)
     }

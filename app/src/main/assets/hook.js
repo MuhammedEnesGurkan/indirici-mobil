@@ -6,7 +6,7 @@
   Object.defineProperty(window, '__mtHook', { value: true });
   const bridge = window.MTBridge;
   if (!bridge) return;
-  const send = (o) => { try { bridge.postMessage(JSON.stringify(o)); } catch (e) {} };
+  const send = (o) => { try { o.ref = location.href; bridge.postMessage(JSON.stringify(o)); } catch (e) {} };
   const MANIFEST_URL = /\.(m3u8|mpd)(\?|#|$)|[?&/=](m3u8|mpd)([?&/.=]|$)/i;
   const STREAM_IN_TEXT = /https?:\\?\/\\?\/[^"'\s<>]+?\.(?:m3u8|mpd|mp4)(?:\?[^"'\s<>]*)?/g;
 

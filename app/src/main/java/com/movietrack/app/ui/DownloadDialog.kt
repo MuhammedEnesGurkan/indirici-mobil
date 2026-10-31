@@ -66,6 +66,7 @@ fun AddDownloadDialog(
     manifestText: String? = null,
     userAgent: String? = null,
     presetName: String? = null,
+    inline: Map<String, String> = emptyMap(),
     onDismiss: () -> Unit,
     onQueued: () -> Unit,
 ) {
@@ -90,8 +91,8 @@ fun AddDownloadDialog(
         loading = true; error = null; info = null
         scope.launch {
             try {
-                val i = Analyzer.analyze(url, kind, referer, userAgent, manifestText)
-                val (base, f) = Analyzer.naming(pageTitle, i.fileName.substringBeforeLast('.').ifBlank { Format.fileNameFromUrl(url).substringBeforeLast('.') })
+                val i = Analyzer.analyze(url, kind, referer, userAgent, manifestText, inline)
+                val (base, f) = Analyzer.naming(pageTitle, i.fileName.substringBeforeLast('.').ifBlank { Format.fileNameFromUrl(url).substringBeforeLast('.') }, referer)
                 name = presetName ?: if (i.kind == "direct") (if (pageTitle != null && Analyzer.categoryFolder(i.fileName, i.mime) == "Video") "$base.${Format.extOf(i.fileName).ifEmpty { "mp4" }}" else i.fileName) else base
                 folder = if (i.kind == "direct") Analyzer.categoryFolder(i.fileName, i.mime).let { c -> if (c == "Video" && pageTitle != null) f else c } else f
                 quality = i.qualities.firstOrNull()?.id
@@ -195,6 +196,7 @@ fun AddDownloadDialog(
                             "subs" to i.subtitles.filter { it.id in subs }.joinToString("\n") { "${it.id}|${it.lang}|${it.name}" },
                             "muxedLang" to i.muxedAudioLang,
                         )
+                        inline.forEach { (k, v) -> if (v.length < 300_000) meta["inline:$k"] = v }
                         NewDownload(url = url, fileName = "$name.mp4", type = i.kind, mime = "video/mp4", size = i.qualities.firstOrNull { it.id == quality }?.estSize ?: 0,
                             referer = referer, userAgent = userAgent, pageUrl = referer, title = pageTitle, meta = meta, labels = labels)
                     }

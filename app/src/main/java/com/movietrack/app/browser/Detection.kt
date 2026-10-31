@@ -49,6 +49,17 @@ object Detection {
         "clarity.ms", "quantserve.com", "zedo.com", "revcontent.com", "vidoomy.com", "aniview.com", "connatix.com", "primis.tech",
     )
 
+    private val imageExt = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico")
+    private val adWords = Regex("(?i)(bet|bahis|casino|kumar|slot|jackpot|maxwin|bonus|promo|reklam|banner|sponsor|preroll|vast|[^a-z]ads?[^a-z])")
+
+    /** Sitelerin video reklamları sık sık .png/.jpg uzantısıyla gizlenir; bahis/kumar adları da reklam. */
+    fun isLikelyAd(url: String): Boolean {
+        if (isAdHost(url)) return true
+        val path = url.substringBefore('?').lowercase(Locale.ROOT)
+        if (Format.extOf(path) in imageExt) return true
+        return adWords.containsMatchIn(path.substringAfterLast('/'))
+    }
+
     fun isAdHost(url: String): Boolean {
         val h = Format.host(url).lowercase(Locale.ROOT)
         if (h.isEmpty()) return false

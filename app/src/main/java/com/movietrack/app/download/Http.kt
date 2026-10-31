@@ -27,7 +27,14 @@ object Http {
     fun request(e: DownloadEntity?, url: String, range: LongArray? = null): Request {
         val b = Request.Builder().url(url)
         b.header("User-Agent", e?.userAgent ?: DEFAULT_UA)
-        e?.referer?.let { b.header("Referer", it) }
+        e?.referer?.let { ref ->
+            b.header("Referer", ref)
+            // Oynatıcı sunucuları çoğu zaman çağıran çerçevenin kaynağını (Origin) da bekler
+            try {
+                val r = java.net.URI(ref); val u = java.net.URI(url)
+                if (r.host != null && r.host != u.host) b.header("Origin", "${r.scheme}://${r.host}${if (r.port > 0) ":${r.port}" else ""}")
+            } catch (_: Exception) {}
+        }
         // Tarayıcıdaki oturum çerezleri (her istek anında güncel)
         val cookie = try { CookieManager.getInstance().getCookie(url) } catch (_: Throwable) { null } ?: e?.cookies
         if (!cookie.isNullOrEmpty()) b.header("Cookie", cookie)
@@ -58,8 +65,15 @@ object Http {
         }
     }
 
-    suspend fun text(e: DownloadEntity?, url: String): String = retry(3) {
-        execute(request(e, url)).use { it.body!!.string() }
+    private val textClient: OkHttpClient by lazy { client.newBuilder().callTimeout(45, TimeUnit.SECONDS).build() }
+
+    suspend fun text(e: DownloadEntity?, url: String): String = retry(2) {
+        val req = request(e, url)
+        val res = try { textClient.newCall(req).execute() } catch (t: java.io.InterruptedIOException) {
+            throw IOException("Sunucu yanıt vermedi (zaman aşımı): ${java.net.URI(url).host}")
+        }
+        if (!res.isSuccessful) { val c = res.code; res.close(); throw HttpException(c, url) }
+        res.use { it.body!!.string() }
     }
 
     suspend fun bytes(e: DownloadEntity?, url: String, range: LongArray? = null, onBytes: (Int) -> Unit = {}): ByteArray = retry {

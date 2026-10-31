@@ -50,7 +50,7 @@ class Tab(val id: Long, val incognito: Boolean, context: Context) {
         media.update { list ->
             if (list.any { it.url == m.url }) {
                 list.map { if (it.url == m.url) it.copy(duration = maxOf(it.duration, m.duration), manifestText = it.manifestText ?: m.manifestText) else it }
-            } else list + m.copy(isAd = m.isAd || Detection.isAdHost(m.url))
+            } else list + m.copy(isAd = m.isAd || (m.kind != "hls" && m.kind != "dash" && Detection.isLikelyAd(m.url)) || Detection.isAdHost(m.url))
         }
     }
 
@@ -116,7 +116,7 @@ object TabManager {
     private fun onBridgeMessage(tab: Tab, json: String) {
         try {
             val o = JSONObject(json)
-            val ref = tab.currentUrl
+            val ref = o.optString("ref").takeIf { it.startsWith("http") } ?: tab.currentUrl
             val title = tab.title.value
             when (o.optString("t")) {
                 "manifest" -> {

@@ -29,7 +29,23 @@ object EpisodeParser {
         .trim(' ', '-', '–', '—', '|', ':', '·', ',', '.', '(', '[')
         .trim()
 
-    fun parse(raw: String): Info {
+    /** Başlıktaki site adını (ör. "Dizipal The Walking Dead … | Dizipal") ayıklar. */
+    fun stripSite(title: String, host: String): String {
+        val label = host.lowercase().removePrefix("www.").substringBefore('.').replace(Regex("\\d+$"), "")
+        if (label.length < 3) return title
+        val parts = title.split(Regex("\\s+[|–—]\\s+|\\s+-\\s+")).filter { p -> !p.lowercase().replace(" ", "").let { it == label || it.startsWith(label) && it.length <= label.length + 4 } }
+        var t = parts.joinToString(" - ").ifBlank { title }
+        // Baştaki/sondaki site adı kelimesi
+        val words = t.split(' ').toMutableList()
+        fun isSite(w: String) = w.length >= 3 && w.lowercase().replace(Regex("[^a-z0-9]"), "").let { it.isNotEmpty() && (label.startsWith(it) || it.startsWith(label)) }
+        while (words.size > 1 && isSite(words.first())) words.removeAt(0)
+        while (words.size > 1 && isSite(words.last())) words.removeAt(words.size - 1)
+        t = words.joinToString(" ")
+        return t
+    }
+
+    fun parse(raw0: String, host: String = ""): Info {
+        val raw = if (host.isNotEmpty()) stripSite(raw0, host) else raw0
         // Dosya adındaki uzantıyı ve ayraç noktalarını boşluğa çevir
         val noExt = raw.replace(Regex("\\.(mp4|mkv|avi|webm|mov|ts|m4v|srt|vtt)$", RegexOption.IGNORE_CASE), "")
         val text = if (!noExt.contains(' ') && noExt.count { it == '.' || it == '_' } >= 2) noExt.replace('.', ' ').replace('_', ' ') else noExt

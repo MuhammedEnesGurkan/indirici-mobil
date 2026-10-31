@@ -123,7 +123,8 @@ fun BrowserScreen(onAddUrl: (String) -> Unit, snack: SnackbarHostState) {
         }
     }
 
-    val visibleMedia = media.filter { !it.isAd }
+    val longestMedia = media.maxOfOrNull { it.duration } ?: 0.0
+    val visibleMedia = media.filter { !it.isAd && !(it.duration in 0.1..59.0 && longestMedia > 300) }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             // Adres çubuğu
@@ -192,7 +193,7 @@ fun BrowserScreen(onAddUrl: (String) -> Unit, snack: SnackbarHostState) {
 
     if (showMedia) {
         ModalBottomSheet(onDismissRequest = { showMedia = false }, containerColor = MT.Surface) {
-            MediaList(media, title) { m -> showMedia = false; dialog = DialogReq(m.url, m.kind, m.referer, title, m.manifestText) }
+            MediaList(media, title, url) { m -> showMedia = false; dialog = DialogReq(m.url, m.kind, m.referer, title, m.manifestText) }
         }
     }
 
@@ -230,7 +231,8 @@ fun BrowserScreen(onAddUrl: (String) -> Unit, snack: SnackbarHostState) {
 
     dialog?.let { d ->
         AddDownloadDialog(initialUrl = d.url, referer = d.referer, pageTitle = d.title, kind = d.kind, manifestText = d.manifest, userAgent = d.ua ?: tab.webView.settings.userAgentString,
-            presetName = d.name, onDismiss = { dialog = null }, onQueued = { dialog = null; scope.launch { snack.showSnackbar("İndirme kuyruğa eklendi") } })
+            presetName = d.name, inline = media.mapNotNull { m -> m.manifestText?.takeIf { it.isNotBlank() }?.let { m.url to it } }.toMap(),
+            onDismiss = { dialog = null }, onQueued = { dialog = null; scope.launch { snack.showSnackbar("İndirme kuyruğa eklendi") } })
     }
 }
 
@@ -248,24 +250,42 @@ private fun copy(ctx: Context, text: String) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun MediaList(media: List<DetectedMedia>, pageTitle: String, onPick: (DetectedMedia) -> Unit) {
+private fun MediaList(media: List<DetectedMedia>, pageTitle: String, pageUrl: String, onPick: (DetectedMedia) -> Unit) {
+    val name = com.movietrack.app.download.Analyzer.displayName(pageTitle, pageUrl)
+    var showAds by remember { mutableStateOf(false) }
+    val longest = media.maxOfOrNull { it.duration } ?: 0.0
+    // Kısa süreli yan videolar da (uzun bir video varken) muhtemel reklam
+    val isAd = { m: DetectedMedia -> m.isAd || (m.duration in 0.1..59.0 && longest > 300) }
+    val main = media.filter { !isAd(it) }.sortedWith(compareByDescending<DetectedMedia> { it.kind == "hls" || it.kind == "dash" }.thenByDescending { it.duration })
+    val ads = media.filter(isAd)
     Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-        Text("Bu sayfada bulunan medya", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(name.ifBlank { "Bu sayfada bulunan medya" }, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(pageTitle, color = MT.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (media.isEmpty()) Text("Henüz medya bulunamadı. Videoyu oynatmayı deneyin; akışlar (M3U8/MPD) ve dosyalar burada listelenir.", color = MT.Muted, modifier = Modifier.padding(vertical = 20.dp))
-        // Ana içerik önce: reklam olmayan, uzun süreli akışlar
-        val sorted = media.sortedWith(compareBy<DetectedMedia> { it.isAd }.thenByDescending { it.kind == "hls" || it.kind == "dash" }.thenByDescending { it.duration })
+        if (main.isEmpty()) Text("Henüz video bulunamadı. Videoyu oynatmayı deneyin; akışlar (M3U8/MPD) ve dosyalar burada listelenir.", color = MT.Muted, modifier = Modifier.padding(vertical = 20.dp))
         LazyColumn {
-            items(sorted, key = { it.url }) { m ->
+            items(main.size, key = { main[it].url }) { i ->
+                val m = main[i]
+                val kindLabel = when (m.kind) { "hls" -> "M3U8"; "dash" -> "MPD"; "subtitle" -> "ALTYAZI"; else -> Format.extOf(m.url).uppercase().ifEmpty { m.kind.uppercase() } }
                 Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).background(MT.Surface2, RoundedCornerShape(10.dp)).clickable { onPick(m) }.padding(12.dp)) {
-                    Text(Format.fileNameFromUrl(m.url), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(Format.host(m.url), color = MT.Muted, fontSize = 12.sp)
+                    Text(if (name.isNotBlank()) "$name${if (main.size > 1) " · Kaynak ${i + 1}" else ""}" else Format.fileNameFromUrl(m.url),
+                        fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("${Format.host(m.url)} · ${Format.fileNameFromUrl(m.url)}", color = MT.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Tag(when (m.kind) { "hls" -> "M3U8"; "dash" -> "MPD"; "subtitle" -> "ALTYAZI"; else -> Format.extOf(m.url).uppercase().ifEmpty { m.kind.uppercase() } }, MT.Accent)
+                        Tag(kindLabel, MT.Accent)
                         if (m.duration > 0) Tag("⏱ ${Format.duration(m.duration.toLong())}")
-                        if (m.isAd || (m.duration in 0.1..59.0 && media.any { it.duration > 300 })) Tag("AD", MT.Ad)
                         if (m.lang.isNotEmpty()) LangTag("subtitle:${m.lang}")
                     }
+                }
+            }
+            if (ads.isNotEmpty()) item(key = "ads") {
+                Text(if (showAds) "Reklamları gizle (${ads.size})" else "Reklamlar gizlendi (${ads.size}) · göster", color = MT.Ad, fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth().clickable { showAds = !showAds }.padding(vertical = 12.dp))
+            }
+            if (showAds) items(ads.size, key = { "ad-" + ads[it].url }) { i ->
+                val m = ads[i]
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).background(MT.Surface, RoundedCornerShape(10.dp)).clickable { onPick(m) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Tag("AD", MT.Ad)
+                    Text("  ${Format.fileNameFromUrl(m.url)} · ${Format.host(m.url)}", color = MT.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

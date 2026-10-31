@@ -27,12 +27,15 @@ object Analyzer {
         val muxedAudioLang: String = "",
     )
 
+    @Volatile private var inlineTexts: Map<String, String> = emptyMap()
+
     private fun req(url: String, referer: String?, ua: String?) = DownloadEntity(url = url, type = "direct", fileName = "", referer = referer, userAgent = ua)
 
-    suspend fun analyze(url: String, kind: String?, referer: String?, ua: String?, manifestText: String? = null): Info {
+    suspend fun analyze(url: String, kind: String?, referer: String?, ua: String?, manifestText: String? = null, inline: Map<String, String> = emptyMap()): Info {
+        inlineTexts = inline
         val k = kind ?: com.movietrack.app.browser.Detection.classify(url) ?: "direct"
         return when (k) {
-            "hls" -> hls(url, referer, ua, manifestText)
+            "hls" -> hls(url, referer, ua, manifestText ?: inline[url])
             "dash" -> dash(url, referer, ua, manifestText)
             else -> direct(url, referer, ua)
         }
@@ -57,7 +60,7 @@ object Analyzer {
         var enc = false
         master.variants.firstOrNull()?.let { v ->
             runCatching {
-                val m = Hls.parseMedia(Http.text(e, v.url), v.url)
+                val m = Hls.parseMedia(inlineTexts[v.url] ?: Http.text(e, v.url), v.url)
                 duration = m.duration
                 ads = m.segments.windowed(2).count { (a, b) -> !a.isAd && b.isAd } + if (m.segments.firstOrNull()?.isAd == true) 1 else 0
                 live = m.live; drm = drm || m.drm; enc = m.segments.any { it.key != null }
@@ -112,12 +115,19 @@ object Analyzer {
     }
 
     /** Sayfa başlığından dosya adı ve klasör (diziler: Diziler/Dizi/Sezon N). */
-    fun naming(pageTitle: String?, fallback: String): Pair<String, String> {
-        val p = EpisodeParser.parse(pageTitle?.takeIf { it.isNotBlank() } ?: fallback)
+    fun naming(pageTitle: String?, fallback: String, pageUrl: String? = null): Pair<String, String> {
+        val p = EpisodeParser.parse(pageTitle?.takeIf { it.isNotBlank() } ?: fallback, Format.host(pageUrl ?: ""))
         return if (p.isEpisode && p.series.isNotBlank()) {
             val s = p.season ?: 1
             Format.safeName("${p.series} - S${s.toString().padStart(2, '0')}E${(p.episode ?: 0).toString().padStart(2, '0')}") to "Diziler/${Format.safeName(p.series)}/Sezon $s"
         } else Format.safeName(p.title.ifBlank { fallback }) to "Filmler"
+    }
+
+    /** Medya listesinde gösterilecek ad: "The Walking Dead · S01E01" ya da film adı. */
+    fun displayName(pageTitle: String?, pageUrl: String?): String {
+        if (pageTitle.isNullOrBlank()) return ""
+        val p = EpisodeParser.parse(pageTitle, Format.host(pageUrl ?: ""))
+        return if (p.isEpisode && p.series.isNotBlank()) "${p.series} · S${(p.season ?: 1).toString().padStart(2, '0')}E${(p.episode ?: 0).toString().padStart(2, '0')}" else p.title
     }
 
     fun categoryFolder(fileName: String, mime: String) = Category.of(fileName, mime)

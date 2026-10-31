@@ -139,12 +139,14 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
 
     private suspend fun planHls(): List<Plan> {
         val plans = ArrayList<Plan>()
+        // Tarayıcının yakaladığı liste varsa sunucuya yeniden sorma (bazı sunucular tek seferlik bağlantı verir)
+        suspend fun fetch(u: String) = meta["inline:$u"] ?: Http.text(e, u)
         suspend fun load(url: String): Hls.Media {
             var u = url
-            var text = Http.text(e, u)
+            var text = fetch(u)
             if (Hls.isMaster(text)) {
                 u = Hls.parseMaster(text, u).variants.firstOrNull()?.url ?: error("Varyant bulunamadı")
-                text = Http.text(e, u)
+                text = fetch(u)
             }
             val m = Hls.parseMedia(text, u)
             if (m.drm) error("Bu yayın DRM ile korunuyor; indirilemez.")
