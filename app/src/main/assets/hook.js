@@ -4,6 +4,8 @@
 (() => {
   if (window.__mtHook) return;
   Object.defineProperty(window, '__mtHook', { value: true });
+  // devtools-detector yanlış tetiklenince oynatıcı çerçevesini sonsuz yeniler (Dizibox king.php → HTTP 429)
+  try { Object.defineProperty(window, 'devtoolsDetector', { value: { addListener() {}, launch() {}, stop() {} } }); } catch (e) {}
   const bridge = window.MTBridge;
   if (!bridge) return;
   const send = (o) => { try { o.ref = location.href; bridge.postMessage(JSON.stringify(o)); } catch (e) {} };
