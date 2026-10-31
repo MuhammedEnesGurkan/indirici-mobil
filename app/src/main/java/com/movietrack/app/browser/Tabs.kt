@@ -165,18 +165,25 @@ object TabManager {
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, true)
 
         // Kanca: tüm çerçevelerde belge başında; yoksa sayfa başladığında
-        val listenerOk = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
-        if (listenerOk) {
-            WebViewCompat.addWebMessageListener(w, "MTBridge", setOf("*")) { _, message, _, _, _ ->
-                message.data?.let { onBridgeMessage(tab, it) }
-            }
-        } else {
+        // Kanca köprüsü: tercihen WebMessageListener (tüm çerçeveler), yoksa JavascriptInterface
+        val listenerOk = try {
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                WebViewCompat.addWebMessageListener(w, "MTBridge", setOf("*")) { _, message, _, _, _ ->
+                    message.data?.let { onBridgeMessage(tab, it) }
+                }
+                true
+            } else false
+        } catch (_: Throwable) { false }
+        if (!listenerOk) {
             w.addJavascriptInterface(object {
                 @JavascriptInterface fun postMessage(s: String) = onBridgeMessage(tab, s)
             }, "MTBridge")
         }
-        val docStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
-        if (docStart) WebViewCompat.addDocumentStartJavaScript(w, hookJs, setOf("*"))
+        val docStart = try {
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                WebViewCompat.addDocumentStartJavaScript(w, hookJs, setOf("*")); true
+            } else false
+        } catch (_: Throwable) { false }
 
         w.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {

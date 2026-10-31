@@ -17,6 +17,17 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Çökme olursa ayrıntıyı kaydet; bir sonraki açılışta kullanıcıya gösterilir
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                java.io.File(filesDir, "last_crash.txt").writeText(
+                    "Movie Track ${BuildConfig.VERSION_NAME} · Android ${android.os.Build.VERSION.RELEASE} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n" +
+                        "İş parçacığı: ${t.name}\n\n" + android.util.Log.getStackTraceString(e),
+                )
+            } catch (_: Throwable) {}
+            prev?.uncaughtException(t, e)
+        }
         db = AppDatabase.create(this)
         settings = Settings(this)
         Notifications.createChannels(this)
