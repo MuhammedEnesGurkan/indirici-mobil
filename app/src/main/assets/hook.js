@@ -7,6 +7,23 @@
   const bridge = window.MTBridge;
   if (!bridge) return;
   const send = (o) => { try { o.ref = location.href; bridge.postMessage(JSON.stringify(o)); } catch (e) {} };
+  // Uygulama, sunucu dışarıdan gelen isteği reddederse (403) dosyayı oynatıcının kendi çerçevesinden ister
+  const nativeFetch = window.fetch;
+  bridge.addEventListener('message', (ev) => {
+    let m;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.t !== 'fetch') return;
+    const headers = m.range ? { Range: m.range } : {};
+    nativeFetch.call(window, m.url, { credentials: 'include', headers }).then((r) => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.arrayBuffer();
+    }).then((buf) => {
+      const u8 = new Uint8Array(buf);
+      let s = '';
+      for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+      bridge.postMessage(JSON.stringify({ t: 'fetchResult', id: m.id, b64: btoa(s) }));
+    }).catch((err) => bridge.postMessage(JSON.stringify({ t: 'fetchResult', id: m.id, error: String(err && err.message || err) })));
+  });
   const MANIFEST_URL = /\.(m3u8|mpd)(\?|#|$)|[?&/=](m3u8|mpd)([?&/.=]|$)/i;
   const STREAM_IN_TEXT = /https?:\\?\/\\?\/[^"'\s<>]+?\.(?:m3u8|mpd|mp4)(?:\?[^"'\s<>]*)?/g;
 

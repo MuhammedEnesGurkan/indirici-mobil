@@ -56,7 +56,7 @@ object Http {
             try {
                 return block()
             } catch (e: HttpException) {
-                if ((e.code in 400..499 && e.code !in setOf(403, 408, 429)) || attempt >= times) throw e
+                if ((e.code in 400..499 && e.code !in setOf(408, 429)) || attempt >= times) throw e  // 403: çerçeve yedeğine hemen geç
             } catch (e: IOException) {
                 if (attempt >= times) throw e
             }
@@ -67,7 +67,17 @@ object Http {
 
     private val textClient: OkHttpClient by lazy { client.newBuilder().callTimeout(45, TimeUnit.SECONDS).build() }
 
-    suspend fun text(e: DownloadEntity?, url: String): String = retry(2) {
+    /** Sunucu doğrudan isteği reddederse (401/403) oynatıcı çerçevesinin içinden dener. */
+    private suspend fun <T> withFrameFallback(e: DownloadEntity?, url: String, range: LongArray?, map: (ByteArray) -> T, block: suspend () -> T): T =
+        try { block() } catch (x: HttpException) {
+            if (x.code != 403 && x.code != 401) throw x
+            val data = com.movietrack.app.browser.FrameFetch.fetch(url, e?.referer, range) ?: throw x
+            map(data)
+        }
+
+    suspend fun text(e: DownloadEntity?, url: String): String = withFrameFallback(e, url, null, { String(it) }) { textDirect(e, url) }
+
+    private suspend fun textDirect(e: DownloadEntity?, url: String): String = retry(2) {
         val req = request(e, url)
         val res = try { textClient.newCall(req).execute() } catch (t: java.io.InterruptedIOException) {
             throw IOException("Sunucu yanıt vermedi (zaman aşımı): ${java.net.URI(url).host}")
@@ -76,7 +86,10 @@ object Http {
         res.use { it.body!!.string() }
     }
 
-    suspend fun bytes(e: DownloadEntity?, url: String, range: LongArray? = null, onBytes: (Int) -> Unit = {}): ByteArray = retry {
+    suspend fun bytes(e: DownloadEntity?, url: String, range: LongArray? = null, onBytes: (Int) -> Unit = {}): ByteArray =
+        withFrameFallback(e, url, range, { it.also { d -> onBytes(d.size) } }) { bytesDirect(e, url, range, onBytes) }
+
+    private suspend fun bytesDirect(e: DownloadEntity?, url: String, range: LongArray?, onBytes: (Int) -> Unit): ByteArray = retry {
         execute(request(e, url, range)).use { res ->
             val out = java.io.ByteArrayOutputStream(maxOf(16 * 1024, res.body!!.contentLength().toInt().coerceAtLeast(0)))
             val buf = ByteArray(64 * 1024)

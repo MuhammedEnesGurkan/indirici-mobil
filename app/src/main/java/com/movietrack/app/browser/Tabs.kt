@@ -168,8 +168,9 @@ object TabManager {
         // Kanca köprüsü: tercihen WebMessageListener (tüm çerçeveler), yoksa JavascriptInterface
         val listenerOk = try {
             if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-                WebViewCompat.addWebMessageListener(w, "MTBridge", setOf("*")) { _, message, _, _, _ ->
-                    message.data?.let { onBridgeMessage(tab, it) }
+                WebViewCompat.addWebMessageListener(w, "MTBridge", setOf("*")) { _, message, origin, _, reply ->
+                    FrameFetch.register(origin.toString(), reply)
+                    message.data?.let { if (!FrameFetch.onMessage(it)) onBridgeMessage(tab, it) }
                 }
                 true
             } else false

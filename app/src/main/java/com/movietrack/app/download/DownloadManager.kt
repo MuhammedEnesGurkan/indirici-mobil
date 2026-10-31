@@ -136,7 +136,7 @@ class DownloadManager(private val app: App) {
             withContext(NonCancellable) {
                 e.status = Status.ERROR
                 e.error = when (t) {
-                    is HttpException -> if (t.code == 403 || t.code == 410) "Bağlantının süresi dolmuş olabilir (HTTP ${t.code}). Sayfayı yeniden açıp \"Bağlantıyı yenile\" ile devam edin." else "Sunucu hatası: HTTP ${t.code}"
+                    is HttpException -> if (t.code == 403 || t.code == 410) "Sunucu indirmeyi reddetti (HTTP ${t.code}). Videonun olduğu sayfayı uygulamada açık tutup tekrar deneyin; olmazsa sayfayı yenileyip videoyu yeniden indirin." else "Sunucu hatası: HTTP ${t.code}"
                     else -> t.message ?: t.toString()
                 }
                 ctx.saveNow()
