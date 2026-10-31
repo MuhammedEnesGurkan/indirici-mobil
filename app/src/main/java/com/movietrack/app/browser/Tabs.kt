@@ -221,9 +221,11 @@ object TabManager {
             }
 
             override fun onPageFinished(view: WebView, url: String) {
-                tab.title.value = view.title ?: url
+                // WebView yalnızca ana iş parçacığından okunabilir: başlığı burada al
+                val pageTitle = view.title ?: url
+                tab.title.value = pageTitle
                 if (!tab.incognito && url.startsWith("http")) {
-                    scope.launch { app.db.browser().addHistory(HistoryEntity(title = view.title ?: url, url = url)) }
+                    scope.launch { app.db.browser().addHistory(HistoryEntity(title = pageTitle, url = url)) }
                 }
             }
 
