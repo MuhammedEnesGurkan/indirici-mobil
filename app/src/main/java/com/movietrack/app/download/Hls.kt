@@ -44,6 +44,87 @@ object Hls {
         return data
     }
 
+    /** Liste satırındaki codecs bilgisinden ses var mı: true/false, bilinmiyorsa null. */
+    fun variantHasAudio(v: Variant): Boolean? {
+        if (v.audioGroup.isNotEmpty()) return true
+        if (v.codecs.isBlank()) return null
+        return Regex("(?i)mp4a|ac-3|ec-3|opus|mp3|flac|vorbis|alac").containsMatchIn(v.codecs)
+    }
+
+    /**
+     * İlk segmentten (TS ya da fMP4 başlangıç kutusu) ses izi olup olmadığını çıkarır.
+     * true: ses var, false: yalnızca görüntü, null: anlaşılamadı.
+     */
+    fun segmentHasAudio(raw: ByteArray): Boolean? {
+        val d = stripJunk(raw)
+        if (d.size >= 3 && d[0] == 'I'.code.toByte() && d[1] == 'D'.code.toByte() && d[2] == '3'.code.toByte()) return true // paketli ses (AAC/MP3)
+        if (d.size >= 2 && d[0] == 0xFF.toByte() && (d[1].toInt() and 0xF0) == 0xF0) return true // ADTS
+        if (d.size >= 188 && d[0] == 0x47.toByte()) {
+            val pmtPids = HashSet<Int>()
+            var sawPmt = false
+            var audio = false
+            var i = 0
+            while (i + 188 <= d.size) {
+                if (d[i] != 0x47.toByte()) { i++; continue }
+                val pusi = (d[i + 1].toInt() and 0x40) != 0
+                val pid = ((d[i + 1].toInt() and 0x1F) shl 8) or (d[i + 2].toInt() and 0xFF)
+                val afc = (d[i + 3].toInt() shr 4) and 3
+                var p = i + 4
+                if (afc == 2) { i += 188; continue }
+                if (afc == 3) p += 1 + (d[p].toInt() and 0xFF)
+                if (pusi && p < i + 188) p += 1 + (d[p].toInt() and 0xFF) // pointer_field
+                val end = i + 188
+                if (pusi && p + 8 < end && (pid == 0 || pid in pmtPids)) {
+                    val tableId = d[p].toInt() and 0xFF
+                    val secLen = ((d[p + 1].toInt() and 0x0F) shl 8) or (d[p + 2].toInt() and 0xFF)
+                    val secEnd = minOf(p + 3 + secLen - 4, end)
+                    if (pid == 0 && tableId == 0) {
+                        var q = p + 8
+                        while (q + 4 <= secEnd) {
+                            val prog = ((d[q].toInt() and 0xFF) shl 8) or (d[q + 1].toInt() and 0xFF)
+                            if (prog != 0) pmtPids += ((d[q + 2].toInt() and 0x1F) shl 8) or (d[q + 3].toInt() and 0xFF)
+                            q += 4
+                        }
+                    } else if (tableId == 2 && p + 12 <= end) {
+                        sawPmt = true
+                        val infoLen = ((d[p + 10].toInt() and 0x0F) shl 8) or (d[p + 11].toInt() and 0xFF)
+                        var q = p + 12 + infoLen
+                        while (q + 5 <= secEnd) {
+                            val st = d[q].toInt() and 0xFF
+                            val esLen = ((d[q + 3].toInt() and 0x0F) shl 8) or (d[q + 4].toInt() and 0xFF)
+                            if (st in setOf(0x03, 0x04, 0x0F, 0x11, 0x81, 0x82, 0x83, 0x84, 0x87, 0x1C)) audio = true
+                            if (st == 0x06) { // özel veri: AC-3/E-AC-3/DTS/Opus tanımlayıcısı varsa ses
+                                var r = q + 5
+                                while (r + 2 <= minOf(q + 5 + esLen, secEnd)) {
+                                    val tag = d[r].toInt() and 0xFF
+                                    if (tag == 0x6A || tag == 0x7A || tag == 0x7B || tag == 0x7F) audio = true
+                                    if (tag == 0x05 && r + 6 <= secEnd && String(d, r + 2, 4, Charsets.ISO_8859_1) in setOf("AC-3", "EAC3", "Opus", "DTS1", "DTS2", "DTS3")) audio = true
+                                    r += 2 + (d[r + 1].toInt() and 0xFF)
+                                }
+                            }
+                            q += 5 + esLen
+                        }
+                        return audio
+                    }
+                }
+                i += 188
+            }
+            return if (sawPmt) audio else null
+        }
+        // fMP4: hdlr kutularındaki izleyici türü
+        var found = false
+        var i = 0
+        while (i + 20 <= d.size) {
+            if (d[i] == 'h'.code.toByte() && d[i + 1] == 'd'.code.toByte() && d[i + 2] == 'l'.code.toByte() && d[i + 3] == 'r'.code.toByte()) {
+                val h = String(d, i + 12, 4, Charsets.ISO_8859_1)
+                if (h == "soun") return true
+                if (h == "vide") found = true
+            }
+            i++
+        }
+        return if (found) false else null
+    }
+
     fun resolve(base: String, rel: String): String = try { URI(base).resolve(rel.trim()).toString() } catch (e: Exception) { rel }
 
     fun attrs(s: String): Map<String, String> {

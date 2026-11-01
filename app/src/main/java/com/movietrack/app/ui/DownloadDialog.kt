@@ -104,6 +104,9 @@ fun AddDownloadDialog(
                 name = presetName ?: if (i.kind == "direct") (if (pageTitle != null && Analyzer.categoryFolder(i.fileName, i.mime) == "Video") "$base.${Format.extOf(i.fileName).ifEmpty { "mp4" }}" else i.fileName) else base
                 folder = if (i.kind == "direct") Analyzer.categoryFolder(i.fileName, i.mime).let { c -> if (c == "Video" && pageTitle != null) f else c } else f
                 quality = i.qualities.firstOrNull { it.id == preselectQuality }?.id ?: i.qualities.firstOrNull()?.id
+                // Seçilen kalite sessizse ve ayrı ses izi yoksa sesli bir kaliteyi öne al
+                if (i.audios.isEmpty() && i.qualities.firstOrNull { it.id == quality }?.audio == false)
+                    i.qualities.firstOrNull { it.audio != false }?.let { quality = it.id }
                 val wantA = s.audioLangs.split(',').map { Lang.normalize(it) }
                 audios.clear(); audios += i.audios.filter { it.lang in wantA }.map { it.id }.ifEmpty { i.audios.filter { it.isDefault }.map { it.id }.ifEmpty { i.audios.take(1).map { it.id } } }
                 val wantS = s.subLangs.split(',').map { Lang.normalize(it) }
@@ -151,6 +154,7 @@ fun AddDownloadDialog(
                             Row(Modifier.fillMaxWidth().clickable { quality = q.id }, verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(quality == q.id, { quality = q.id })
                                 Text(q.label + if (q.estSize > 0) " · ~${Format.bytes(q.estSize)}" else "")
+                                if (q.audio == false && i.audios.isEmpty()) { Spacer(Modifier.padding(4.dp)); Tag("SESSİZ", MT.Danger) }
                             }
                         }
                     }
@@ -172,6 +176,10 @@ fun AddDownloadDialog(
                             }
                         }
                     }
+                    if (noAudio(i, quality, audios)) Text(
+                        if (i.audios.isEmpty()) "⚠ Bu kalitede ses izi yok, video sessiz inecek. Sayfadaki ana listeyi (çoklu kalite) seçmeyi deneyin."
+                        else "⚠ Hiç ses izi seçilmedi, video sessiz inecek. Yukarıdan bir ses izi seçin.",
+                        color = MT.Danger, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     if (i.kind != "direct") {
                         Text("Çıktı", color = MT.Muted, fontSize = 12.sp)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -211,8 +219,15 @@ fun AddDownloadDialog(
                     app.downloads.add(req)
                     onQueued()
                 }
-            }) { Text("İndir") }
+            }) { Text(if (info?.let { noAudio(it, quality, audios) } == true) "Yine de indir" else "İndir") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Vazgeç") } },
     )
+}
+
+/** Seçime göre çıkacak dosyada ses olmayacak mı (yalnızca kesin bilindiğinde true). */
+private fun noAudio(i: Analyzer.Info, quality: String?, audios: List<String>): Boolean {
+    if (i.kind == "direct") return false
+    if (audios.any { a -> i.audios.any { it.id == a } }) return false
+    return i.qualities.firstOrNull { it.id == quality }?.audio == false
 }

@@ -8,7 +8,8 @@ import com.movietrack.app.util.Lang
 
 /** İndirmeden önce bir bağlantıyı analiz eder: kaliteler, ses dilleri, altyazılar, süre, boyut. */
 object Analyzer {
-    data class Quality(val id: String, val label: String, val height: Int, val bandwidth: Long, val estSize: Long)
+    /** audio: görüntü akışının içinde ses var mı (true/false), bilinmiyorsa null. */
+    data class Quality(val id: String, val label: String, val height: Int, val bandwidth: Long, val estSize: Long, val audio: Boolean? = null)
     data class Track(val id: String, val lang: String, val name: String, val label: String, val isDefault: Boolean = false)
     data class Info(
         val kind: String, // hls | dash | direct
@@ -48,7 +49,7 @@ object Analyzer {
         if (!Hls.isMaster(text)) {
             val m = Hls.parseMedia(text, url)
             val h = Regex("(2160|1440|1080|720|576|480|360|240)p?").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            return Info("hls", url, "", duration = m.duration, qualities = listOf(Quality(url, if (h > 0) "${h}p" else "Varsayılan", h, 0, 0)),
+            return Info("hls", url, "", duration = m.duration, qualities = listOf(Quality(url, if (h > 0) "${h}p" else "Varsayılan", h, 0, 0, probeAudio(e, m))),
                 adBreaks = m.segments.count { it.isAd && !it.discontinuity }.coerceAtMost(1) + m.segments.windowed(2).count { (a, b) -> !a.isAd && b.isAd },
                 drm = m.drm, live = m.live, encrypted = m.segments.any { it.key != null })
         }
@@ -58,9 +59,11 @@ object Analyzer {
         var live = false
         var drm = master.drm
         var enc = false
+        var firstMedia: Hls.Media? = null
         master.variants.firstOrNull()?.let { v ->
             runCatching {
                 val m = Hls.parseMedia(inlineTexts[v.url] ?: Http.text(e, v.url), v.url)
+                firstMedia = m
                 duration = m.duration
                 ads = m.segments.windowed(2).count { (a, b) -> !a.isAd && b.isAd } + if (m.segments.firstOrNull()?.isAd == true) 1 else 0
                 live = m.live; drm = drm || m.drm; enc = m.segments.any { it.key != null }
@@ -74,13 +77,33 @@ object Analyzer {
             Track(r.url, r.lang, r.name, Lang.subLabel(r.lang))
         }
         val content = duration
+        fun inVideo(v: Hls.Variant): Boolean? {
+            if (v.audioGroup.isNotEmpty()) {
+                val g = audioMedia.filter { it.groupId == v.audioGroup }
+                if (g.any { it.url.isEmpty() }) return true
+                if (g.isNotEmpty()) return false // ses ayrı izlerde
+            }
+            return Hls.variantHasAudio(v.copy(audioGroup = ""))
+        }
+        // codecs bilgisi yoksa ilk kalitenin ilk segmentine bakılır
+        val probed = if (master.variants.any { inVideo(it) == null }) firstMedia?.let { probeAudio(e, it) } else null
         val qualities = master.variants.map { v ->
             Quality(v.url, listOfNotNull(if (v.height > 0) "${v.height}p" else null, if (v.bandwidth > 0) "${v.bandwidth / 100_000 / 10.0} Mbps" else null).joinToString(" · ").ifEmpty { "Varsayılan" },
-                v.height, v.bandwidth, if (v.bandwidth > 0 && content > 0) (v.bandwidth / 8 * content).toLong() else 0)
+                v.height, v.bandwidth, if (v.bandwidth > 0 && content > 0) (v.bandwidth / 8 * content).toLong() else 0, inVideo(v) ?: probed)
         }
         return Info("hls", url, "", duration = duration, qualities = qualities, audios = audios, subtitles = subs, adBreaks = ads, drm = drm, live = live,
             encrypted = enc, muxedAudioLang = audioMedia.firstOrNull { it.url.isEmpty() }?.lang ?: "")
     }
+
+    /** İlk (reklam olmayan) segmentin başını indirip ses izi var mı bakar; şifreliyse ya da hata olursa null. */
+    private suspend fun probeAudio(e: DownloadEntity, m: Hls.Media): Boolean? = runCatching {
+        val seg = m.segments.firstOrNull { !it.isAd } ?: return@runCatching null
+        if (seg.key != null && seg.key.method != "NONE") return@runCatching null
+        kotlinx.coroutines.withTimeout(15_000) {
+            if (seg.map != null) Hls.segmentHasAudio(Http.bytes(e, seg.map, seg.mapRange))
+            else Hls.segmentHasAudio(Http.bytes(e, seg.url, seg.range ?: longArrayOf(0, 262_143)))
+        }
+    }.getOrNull()
 
     private suspend fun dash(url: String, referer: String?, ua: String?, text0: String?): Info {
         val text = text0?.takeIf { it.contains("<MPD") } ?: Http.text(req(url, referer, ua), url)
@@ -88,7 +111,7 @@ object Analyzer {
         val vids = mpd.reps.filter { it.kind == "video" }
         val auds = mpd.reps.filter { it.kind == "audio" }.groupBy { it.lang }.map { (_, l) -> l.maxByOrNull { it.bandwidth }!! }
         return Info("dash", url, "", duration = mpd.duration, drm = mpd.drm,
-            qualities = vids.map { Quality(it.id, "${it.height}p · ${it.bandwidth / 100_000 / 10.0} Mbps", it.height, it.bandwidth, (it.bandwidth / 8 * mpd.duration).toLong()) },
+            qualities = vids.map { Quality(it.id, "${it.height}p · ${it.bandwidth / 100_000 / 10.0} Mbps", it.height, it.bandwidth, (it.bandwidth / 8 * mpd.duration).toLong(), audio = false) },
             audios = auds.map { Track(it.id, it.lang, it.label, Lang.audLabel(it.lang)) },
             subtitles = mpd.reps.filter { it.kind == "text" && it.segments.size == 1 }.map { Track(it.segments[0].url, it.lang, it.label, Lang.subLabel(it.lang)) })
     }

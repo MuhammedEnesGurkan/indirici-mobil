@@ -57,6 +57,37 @@ class ParserTest {
     }
 
     @Test
+    fun detectsSilentSegments() {
+        fun pkt(pid: Int, payload: ByteArray): ByteArray {
+            val b = ByteArray(188) { 0xFF.toByte() }
+            b[0] = 0x47; b[1] = (0x40 or (pid shr 8)).toByte(); b[2] = pid.toByte(); b[3] = 0x10; b[4] = 0
+            payload.copyInto(b, 5)
+            return b
+        }
+        val pat = pkt(0, byteArrayOf(0x00, 0xB0.toByte(), 13, 0, 1, 0xC1.toByte(), 0, 0, 0, 1, 0xF0.toByte(), 0x00, 0, 0, 0, 0))
+        fun pmt(vararg streams: Int): ByteArray {
+            val es = streams.flatMapIndexed { i, st -> listOf(st, 0xE1, 0x00 + i, 0xF0, 0x00) }.map { it.toByte() }
+            val len = 9 + es.size + 4
+            val head = listOf(0x02, 0xB0, len, 0, 1, 0xC1, 0, 0, 0xE1, 0x00, 0xF0, 0x00).map { it.toByte() }
+            return pkt(0x1000, (head + es + listOf<Byte>(0, 0, 0, 0)).toByteArray())
+        }
+        assertEquals(false, Hls.segmentHasAudio(pat + pmt(0x1B) + pkt(0x100, ByteArray(10))))
+        assertEquals(true, Hls.segmentHasAudio(pat + pmt(0x1B, 0x0F) + pkt(0x100, ByteArray(10))))
+        // sahte resim başlığıyla da çalışmalı
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47) + ByteArray(100) { 7 }
+        assertEquals(false, Hls.segmentHasAudio(png + pat + pmt(0x1B) + pkt(0x100, ByteArray(10))))
+        // fMP4 init: hdlr vide / soun
+        fun hdlr(t: String) = byteArrayOf(0, 0, 0, 33) + "hdlr".toByteArray() + ByteArray(8) + t.toByteArray() + ByteArray(13)
+        assertEquals(false, Hls.segmentHasAudio(hdlr("vide")))
+        assertEquals(true, Hls.segmentHasAudio(hdlr("vide") + hdlr("soun")))
+        assertEquals(null, Hls.segmentHasAudio(ByteArray(50)))
+        val v = Hls.Variant("u", 1, 0, 0, "avc1.64001f", "", "")
+        assertEquals(false, Hls.variantHasAudio(v))
+        assertEquals(true, Hls.variantHasAudio(v.copy(codecs = "avc1.64001f,mp4a.40.2")))
+        assertEquals(null, Hls.variantHasAudio(v.copy(codecs = "")))
+    }
+
+    @Test
     fun languages() {
         assertEquals("tr", Lang.normalize("tur"))
         assertEquals("en", Lang.normalize("en-US"))
