@@ -93,5 +93,9 @@ class ParserTest {
         assertEquals("en", Lang.normalize("en-US"))
         assertEquals("aud:de", Lang.audLabel("German"))
         assertEquals("tur", Lang.toIso3("tr"))
+        assertEquals("en", Lang.fromFileName("https://hdfilmcehennemi.mobi/s/6DwLAfpoSGn-eng-neverafterdark.vtt"))
+        assertEquals("pt", Lang.fromFileName("https://x/6DwLAfpoSGn-pt-sd-144426-3264.vtt?a=1"))
+        assertEquals("tr", Lang.fromFileName("https://x/tr.vtt"))
+        assertEquals("", Lang.fromFileName("https://x/abc-sd-1080.vtt"))
     }
 }

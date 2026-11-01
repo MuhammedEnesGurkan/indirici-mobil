@@ -106,6 +106,21 @@ object Lang {
         return ""
     }
 
+    /** Altyazı dosya adından dil: "xYz-eng-film.vtt" -> en, "abc-pt-sd-123.vtt" -> pt, "tr.vtt" -> tr. */
+    fun fromFileName(url: String): String {
+        val name = url.substringBefore('?').substringAfterLast('/').substringBeforeLast('.').lowercase(Locale.ROOT)
+        val tokens = name.split(Regex("[^\\p{L}]+")).filter { it.isNotEmpty() }
+        for (t in tokens) {
+            map[t]?.let { return it }
+            if (t.length == 2 && t in iso3) return t
+        }
+        return ""
+    }
+
+    private val names = mapOf("tr" to "Türkçe", "en" to "İngilizce", "de" to "Almanca", "fr" to "Fransızca", "es" to "İspanyolca", "it" to "İtalyanca",
+        "pt" to "Portekizce", "ru" to "Rusça", "ar" to "Arapça", "ja" to "Japonca", "ko" to "Korece", "zh" to "Çince", "hi" to "Hintçe")
+    fun displayName(code: String) = names[normalize(code)] ?: "Bilinmeyen dil"
+
     fun toIso3(code: String): String = iso3[normalize(code)] ?: "und"
     fun audLabel(code: String) = "aud:${normalize(code).ifEmpty { "und" }}"
     fun subLabel(code: String) = "subtitle:${normalize(code).ifEmpty { "und" }}"

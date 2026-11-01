@@ -238,7 +238,7 @@ fun BrowserScreen(onAddUrl: (String) -> Unit, snack: SnackbarHostState) {
     dialog?.let { d ->
         AddDownloadDialog(initialUrl = d.url, referer = d.referer, pageTitle = d.title, kind = d.kind, manifestText = d.manifest, userAgent = d.ua ?: tab.webView.settings.userAgentString,
             presetName = d.name, preselectQuality = d.preselect,
-            pageSubtitles = media.filter { it.kind == "subtitle" }.map { it.url to (it.lang.ifEmpty { com.movietrack.app.util.Lang.normalize(Format.fileNameFromUrl(it.url).substringBeforeLast('.')) }) },
+            pageSubtitles = media.filter { it.kind == "subtitle" }.map { it.url to subLang(it) },
             inline = media.mapNotNull { m -> m.manifestText?.takeIf { it.isNotBlank() }?.let { m.url to it } }.toMap(),
             onDismiss = { dialog = null }, onQueued = { dialog = null; scope.launch { snack.showSnackbar("İndirme kuyruğa eklendi") } })
     }
@@ -268,23 +268,38 @@ private fun MediaList(media: List<DetectedMedia>, pageTitle: String, pageUrl: St
     val children = com.movietrack.app.browser.Detection.childToMaster(media)
     val main = media.filter { !isAd(it) && it.url !in children }.sortedWith(compareByDescending<DetectedMedia> { it.kind == "hls" || it.kind == "dash" }.thenByDescending { it.duration })
     val ads = media.filter(isAd)
+    val subsList = main.filter { it.kind == "subtitle" }
+    val videos = main - subsList.toSet()
     Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
         Text(name.ifBlank { "Bu sayfada bulunan medya" }, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(pageTitle, color = MT.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (main.isEmpty()) Text("Henüz video bulunamadı. Videoyu oynatmayı deneyin; akışlar (M3U8/MPD) ve dosyalar burada listelenir.", color = MT.Muted, modifier = Modifier.padding(vertical = 20.dp))
+        if (videos.isEmpty() && subsList.isEmpty()) Text("Henüz video bulunamadı. Videoyu oynatmayı deneyin; akışlar (M3U8/MPD) ve dosyalar burada listelenir.", color = MT.Muted, modifier = Modifier.padding(vertical = 20.dp))
         LazyColumn {
-            items(main.size, key = { main[it].url }) { i ->
-                val m = main[i]
+            items(videos.size, key = { videos[it].url }) { i ->
+                val m = videos[i]
                 val kindLabel = when (m.kind) { "hls" -> "M3U8"; "dash" -> "MPD"; "subtitle" -> "ALTYAZI"; else -> Format.extOf(m.url).uppercase().ifEmpty { m.kind.uppercase() } }
                 Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).background(MT.Surface2, RoundedCornerShape(10.dp)).clickable { onPick(m) }.padding(12.dp)) {
-                    Text(if (name.isNotBlank()) "$name${if (main.size > 1) " · Kaynak ${i + 1}" else ""}" else Format.fileNameFromUrl(m.url),
+                    Text(if (name.isNotBlank()) "$name${if (videos.size > 1) " · Kaynak ${i + 1}" else ""}" else Format.fileNameFromUrl(m.url),
                         fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text("${Format.host(m.url)} · ${Format.fileNameFromUrl(m.url)}", color = MT.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Tag(kindLabel, MT.Accent)
                         if (m.duration > 0) Tag("⏱ ${Format.duration(m.duration.toLong())}")
                         if (m.lang.isNotEmpty()) LangTag("subtitle:${m.lang}")
+                        if ((m.kind == "hls" || m.kind == "dash") && subsList.isNotEmpty()) Tag("+${subsList.size} altyazı")
                     }
+                }
+            }
+            if (subsList.isNotEmpty()) item(key = "subs-h") {
+                Text("Altyazılar" + if (videos.any { it.kind == "hls" || it.kind == "dash" }) " · videoyu indirirken de seçilebilir" else "",
+                    color = MT.Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
+            }
+            items(subsList.size, key = { "sub-" + subsList[it].url }) { i ->
+                val m = subsList[i]
+                val l = subLang(m)
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).background(MT.Surface2, RoundedCornerShape(10.dp)).clickable { onPick(m) }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    LangTag("subtitle:${l.ifEmpty { "und" }}")
+                    Text("  ${com.movietrack.app.util.Lang.displayName(l)} · ${Format.extOf(m.url).uppercase()}", color = MT.Text, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             if (ads.isNotEmpty()) item(key = "ads") {
@@ -363,3 +378,5 @@ private fun HistoryPanel(kind: String, onOpen: (String) -> Unit, onDismiss: () -
         },
     )
 }
+
+private fun subLang(m: DetectedMedia) = com.movietrack.app.util.Lang.normalize(m.lang).ifEmpty { com.movietrack.app.util.Lang.fromFileName(m.url) }
