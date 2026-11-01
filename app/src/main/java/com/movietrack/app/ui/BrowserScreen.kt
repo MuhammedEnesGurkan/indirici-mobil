@@ -281,7 +281,7 @@ private fun MediaList(media: List<DetectedMedia>, pageTitle: String, pageUrl: St
                 Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).background(MT.Surface2, RoundedCornerShape(10.dp)).clickable { onPick(m) }.padding(12.dp)) {
                     Text(if (name.isNotBlank()) "$name${if (videos.size > 1) " · Kaynak ${i + 1}" else ""}" else Format.fileNameFromUrl(m.url),
                         fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("${Format.host(m.url)} · ${Format.fileNameFromUrl(m.url)}", color = MT.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${Format.host(m.url)} · ${sourceDesc(m)}", color = MT.Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Tag(kindLabel, MT.Accent)
                         if (m.duration > 0) Tag("⏱ ${Format.duration(m.duration.toLong())}")
@@ -380,3 +380,20 @@ private fun HistoryPanel(kind: String, onOpen: (String) -> Unit, onDismiss: () -
 }
 
 private fun subLang(m: DetectedMedia) = com.movietrack.app.util.Lang.normalize(m.lang).ifEmpty { com.movietrack.app.util.Lang.fromFileName(m.url) }
+
+/** Kaynağın kısa açıklaması: sitelerin gizlemek için verdiği adlar (master.txt, video.png) yerine ne olduğu. */
+private fun sourceDesc(m: DetectedMedia): String {
+    val t = m.manifestText
+    if (m.kind == "hls" && t != null) {
+        if (com.movietrack.app.download.Hls.isMaster(t)) {
+            val n = Regex("#EXT-X-STREAM-INF").findAll(t).count()
+            return if (n > 1) "Ana liste · $n kalite" else "Ana liste"
+        }
+        return "Video listesi"
+    }
+    return when (m.kind) {
+        "hls" -> "Video listesi (M3U8)"
+        "dash" -> "Video listesi (MPD)"
+        else -> Format.fileNameFromUrl(m.url)
+    }
+}
