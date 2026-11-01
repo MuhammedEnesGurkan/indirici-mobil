@@ -47,6 +47,16 @@ class ParserTest {
     }
 
     @Test
+    fun fakeImageHeaderIsStripped() {
+        val ts = ByteArray(188 * 4) { if (it % 188 == 0) 0x47 else 1 }
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(200) { 7 }
+        val out = Hls.stripJunk(png + ts)
+        assertEquals(ts.size, out.size)
+        assertEquals(0x47.toByte(), out[0])
+        assertEquals(ts.size, Hls.stripJunk(ts).size)
+    }
+
+    @Test
     fun languages() {
         assertEquals("tr", Lang.normalize("tur"))
         assertEquals("en", Lang.normalize("en-US"))

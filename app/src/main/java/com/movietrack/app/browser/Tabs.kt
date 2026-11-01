@@ -194,7 +194,7 @@ object TabManager {
                 }
                 Detection.classify(url)?.let { kind ->
                     val ref = request.requestHeaders["Referer"] ?: tab.currentUrl
-                    tab.addMedia(DetectedMedia(url, kind, ref, tab.title.value, tab.playerDuration))
+                    tab.addMedia(DetectedMedia(url, kind, ref, tab.title.value, if (kind == "hls" || kind == "dash") tab.playerDuration else 0.0))
                 }
                 return null
             }

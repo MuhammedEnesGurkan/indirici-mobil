@@ -60,6 +60,18 @@ object Detection {
         return adWords.containsMatchIn(path.substringAfterLast('/'))
     }
 
+    /** Yakalanan ana listelerin (master) içindeki kalite ve ses listeleri: alt liste adresi -> ana liste adresi */
+    fun childToMaster(media: List<DetectedMedia>): Map<String, String> {
+        val out = HashMap<String, String>()
+        for (m in media) {
+            val t = m.manifestText ?: continue
+            if (m.kind != "hls" || !com.movietrack.app.download.Hls.isMaster(t)) continue
+            val master = try { com.movietrack.app.download.Hls.parseMaster(t, m.url) } catch (_: Exception) { continue }
+            (master.variants.map { it.url } + master.media.map { it.url }).filter { it.isNotEmpty() && it != m.url }.forEach { out[it] = m.url }
+        }
+        return out
+    }
+
     fun isAdHost(url: String): Boolean {
         val h = Format.host(url).lowercase(Locale.ROOT)
         if (h.isEmpty()) return false

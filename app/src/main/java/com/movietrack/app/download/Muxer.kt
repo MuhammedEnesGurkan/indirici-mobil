@@ -15,7 +15,8 @@ import java.nio.ByteBuffer
 object Muxer {
     data class Input(val path: String, val takeVideo: Boolean, val takeAudio: Boolean, val lang: String = "")
 
-    fun mux(inputs: List<Input>, out: FileDescriptor, onProgress: (Float) -> Unit = {}) {
+    /** @return eklenen ses izi sayısı */
+    fun mux(inputs: List<Input>, out: FileDescriptor, onProgress: (Float) -> Unit = {}): Int {
         val muxer = MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>)
         val srcs = ArrayList<Src>()
@@ -80,6 +81,7 @@ object Muxer {
                 ex.advance()
             }
             muxer.stop()
+            return srcs.sumOf { it.audio.size }
         } finally {
             srcs.forEach { it.ex.release() }
             try { muxer.release() } catch (_: Exception) {}

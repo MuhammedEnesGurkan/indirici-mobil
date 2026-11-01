@@ -66,6 +66,8 @@ fun AddDownloadDialog(
     manifestText: String? = null,
     userAgent: String? = null,
     presetName: String? = null,
+    preselectQuality: String? = null,
+    pageSubtitles: List<Pair<String, String>> = emptyList(),
     inline: Map<String, String> = emptyMap(),
     onDismiss: () -> Unit,
     onQueued: () -> Unit,
@@ -91,11 +93,17 @@ fun AddDownloadDialog(
         loading = true; error = null; info = null
         scope.launch {
             try {
-                val i = Analyzer.analyze(url, kind, referer, userAgent, manifestText, inline)
+                var i = Analyzer.analyze(url, kind, referer, userAgent, manifestText, inline)
+                // Sayfada ayrıca bulunan altyazılar (ör. tr.vtt, en.vtt) akışa eklenebilir
+                if (i.kind != "direct") {
+                    val extra = pageSubtitles.filter { (u, _) -> i.subtitles.none { it.id == u } }
+                        .map { (u, l) -> Analyzer.Track(u, l, Format.fileNameFromUrl(u), com.movietrack.app.util.Lang.subLabel(l)) }
+                    if (extra.isNotEmpty()) i = i.copy(subtitles = i.subtitles + extra)
+                }
                 val (base, f) = Analyzer.naming(pageTitle, i.fileName.substringBeforeLast('.').ifBlank { Format.fileNameFromUrl(url).substringBeforeLast('.') }, referer)
                 name = presetName ?: if (i.kind == "direct") (if (pageTitle != null && Analyzer.categoryFolder(i.fileName, i.mime) == "Video") "$base.${Format.extOf(i.fileName).ifEmpty { "mp4" }}" else i.fileName) else base
                 folder = if (i.kind == "direct") Analyzer.categoryFolder(i.fileName, i.mime).let { c -> if (c == "Video" && pageTitle != null) f else c } else f
-                quality = i.qualities.firstOrNull()?.id
+                quality = i.qualities.firstOrNull { it.id == preselectQuality }?.id ?: i.qualities.firstOrNull()?.id
                 val wantA = s.audioLangs.split(',').map { Lang.normalize(it) }
                 audios.clear(); audios += i.audios.filter { it.lang in wantA }.map { it.id }.ifEmpty { i.audios.filter { it.isDefault }.map { it.id }.ifEmpty { i.audios.take(1).map { it.id } } }
                 val wantS = s.subLangs.split(',').map { Lang.normalize(it) }

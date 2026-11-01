@@ -17,6 +17,33 @@ object Hls {
 
     fun isMaster(text: String) = text.contains("#EXT-X-STREAM-INF")
 
+    /**
+     * Bazı siteler segmentleri .png/.jpg gibi gösterip başına sahte resim başlığı ekler; oynatıcıları bu
+     * kısmı atar. Gerçek akışın başladığı yeri bulup öncesini atar (TS: arka arkaya 0x47 senkron baytları,
+     * fMP4: ftyp/styp/moof/moov/sidx kutusu). Bulunamazsa veri olduğu gibi döner.
+     */
+    fun stripJunk(data: ByteArray): ByteArray {
+        if (data.size < 188 * 3) return data
+        fun ts(i: Int) = data[i] == 0x47.toByte() && data[i + 188] == 0x47.toByte() && data[i + 376] == 0x47.toByte()
+        if (ts(0)) return data
+        fun box(i: Int): Boolean {
+            if (i + 8 > data.size) return false
+            val t = String(data, i + 4, 4, Charsets.ISO_8859_1)
+            return t in setOf("ftyp", "styp", "moof", "moov", "sidx", "emsg")
+        }
+        if (box(0)) return data
+        val limit = minOf(data.size - 377, 256 * 1024)
+        for (i in 1 until limit) {
+            if (data[i] == 0x47.toByte() && ts(i)) return data.copyOfRange(i, data.size)
+            if (box(i) && i >= 4) {
+                // kutu boyutu makul mü (4 bayt büyük endian)
+                val size = ((data[i].toLong() and 0xff) shl 24) or ((data[i + 1].toLong() and 0xff) shl 16) or ((data[i + 2].toLong() and 0xff) shl 8) or (data[i + 3].toLong() and 0xff)
+                if (size >= 8 && size <= data.size - i) return data.copyOfRange(i, data.size)
+            }
+        }
+        return data
+    }
+
     fun resolve(base: String, rel: String): String = try { URI(base).resolve(rel.trim()).toString() } catch (e: Exception) { rel }
 
     fun attrs(s: String): Map<String, String> {

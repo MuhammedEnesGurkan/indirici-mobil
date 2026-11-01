@@ -81,7 +81,7 @@ import com.movietrack.app.data.BookmarkEntity
 import com.movietrack.app.util.Format
 import kotlinx.coroutines.launch
 
-private data class DialogReq(val url: String, val kind: String?, val referer: String?, val title: String?, val manifest: String? = null, val ua: String? = null, val name: String? = null)
+private data class DialogReq(val url: String, val kind: String?, val referer: String?, val title: String?, val manifest: String? = null, val ua: String? = null, val name: String? = null, val preselect: String? = null)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -193,7 +193,13 @@ fun BrowserScreen(onAddUrl: (String) -> Unit, snack: SnackbarHostState) {
 
     if (showMedia) {
         ModalBottomSheet(onDismissRequest = { showMedia = false }, containerColor = MT.Surface) {
-            MediaList(media, title, url) { m -> showMedia = false; dialog = DialogReq(m.url, m.kind, m.referer, title, m.manifestText) }
+            MediaList(media, title, url) { picked ->
+                showMedia = false
+                // Alt liste seçildiyse ana listeden, o kalite seçili olarak indir (ses ayrı olabilir)
+                val masterUrl = com.movietrack.app.browser.Detection.childToMaster(media)[picked.url]
+                val m = masterUrl?.let { u -> media.firstOrNull { it.url == u } } ?: picked
+                dialog = DialogReq(m.url, m.kind, m.referer, title, m.manifestText, preselect = if (m !== picked) picked.url else null)
+            }
         }
     }
 
@@ -231,7 +237,9 @@ fun BrowserScreen(onAddUrl: (String) -> Unit, snack: SnackbarHostState) {
 
     dialog?.let { d ->
         AddDownloadDialog(initialUrl = d.url, referer = d.referer, pageTitle = d.title, kind = d.kind, manifestText = d.manifest, userAgent = d.ua ?: tab.webView.settings.userAgentString,
-            presetName = d.name, inline = media.mapNotNull { m -> m.manifestText?.takeIf { it.isNotBlank() }?.let { m.url to it } }.toMap(),
+            presetName = d.name, preselectQuality = d.preselect,
+            pageSubtitles = media.filter { it.kind == "subtitle" }.map { it.url to (it.lang.ifEmpty { com.movietrack.app.util.Lang.normalize(Format.fileNameFromUrl(it.url).substringBeforeLast('.')) }) },
+            inline = media.mapNotNull { m -> m.manifestText?.takeIf { it.isNotBlank() }?.let { m.url to it } }.toMap(),
             onDismiss = { dialog = null }, onQueued = { dialog = null; scope.launch { snack.showSnackbar("İndirme kuyruğa eklendi") } })
     }
 }
@@ -256,7 +264,9 @@ private fun MediaList(media: List<DetectedMedia>, pageTitle: String, pageUrl: St
     val longest = media.maxOfOrNull { it.duration } ?: 0.0
     // Kısa süreli yan videolar da (uzun bir video varken) muhtemel reklam
     val isAd = { m: DetectedMedia -> m.isAd || (m.duration in 0.1..59.0 && longest > 300) }
-    val main = media.filter { !isAd(it) }.sortedWith(compareByDescending<DetectedMedia> { it.kind == "hls" || it.kind == "dash" }.thenByDescending { it.duration })
+    // Ana listenin içindeki tek kalite/ses listelerini ayrıca gösterme (tek başına sessiz olabilir)
+    val children = com.movietrack.app.browser.Detection.childToMaster(media)
+    val main = media.filter { !isAd(it) && it.url !in children }.sortedWith(compareByDescending<DetectedMedia> { it.kind == "hls" || it.kind == "dash" }.thenByDescending { it.duration })
     val ads = media.filter(isAd)
     Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
         Text(name.ifBlank { "Bu sayfada bulunan medya" }, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)

@@ -54,7 +54,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                         val f = segFile(si, i)
                         if (f.exists()) continue
                         var data = Http.bytes(e, seg.url, seg.range) { ctx.onBytes(it) }
-                        data = decrypt(seg, data)
+                        data = Hls.stripJunk(decrypt(seg, data))
                         val tmp = File(f.path + ".part")
                         tmp.writeBytes(data)
                         tmp.renameTo(f)
@@ -86,7 +86,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             val name = "$base.mp4"
             val out = OutputStore.create(app, name, "video/mp4", folder)
             try {
-                out.openRw(app).use { pfd ->
+                val audioTracks = out.openRw(app).use { pfd ->
                     Muxer.mux(plans.indices.map { si ->
                         val p = plans[si]
                         // Ayrı ses izi seçildiyse ana akıştaki gömülü sesi yalnızca dil bilgisi yoksa al
@@ -97,6 +97,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 e.outputUri = out.encode()
                 e.fileName = name
                 merged = true
+                if (audioTracks == 0) e.error = "Uyarı: dosyada ses izi yok. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin."
             } catch (t: Throwable) {
                 out.delete(app)
                 e.error = "Uyarı: MP4'e birleştirilemedi (${t.message}); dosyalar ayrı kaydedildi."
