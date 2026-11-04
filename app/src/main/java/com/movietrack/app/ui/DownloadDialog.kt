@@ -197,25 +197,8 @@ fun AddDownloadDialog(
             TextButton(enabled = info != null && info?.drm == false && info?.live == false && name.isNotBlank(), onClick = {
                 val i = info ?: return@TextButton
                 scope.launch {
-                    val labels = buildList {
-                        i.qualities.firstOrNull { it.id == quality }?.let { if (it.height > 0) add("${it.height}p") }
-                        i.audios.filter { it.id in audios }.forEach { add(it.label) }
-                        i.subtitles.filter { it.id in subs }.forEach { add(it.label) }
-                    }.joinToString(" ")
-                    val req = if (i.kind == "direct") {
-                        NewDownload(url = url, fileName = name, mime = i.mime, size = i.size, referer = referer, userAgent = userAgent, pageUrl = referer, title = pageTitle, labels = labels,
-                            meta = mapOf("folder" to folder))
-                    } else {
-                        val meta = mutableMapOf(
-                            "variant" to (quality ?: url), "mode" to mode, "skipAds" to if (skipAds) "1" else "0", "base" to name, "folder" to folder,
-                            "audios" to i.audios.filter { it.id in audios }.joinToString("\n") { "${it.id}|${it.lang}|${it.name}" },
-                            "subs" to i.subtitles.filter { it.id in subs }.joinToString("\n") { "${it.id}|${it.lang}|${it.name}" },
-                            "muxedLang" to i.muxedAudioLang,
-                        )
-                        inline.forEach { (k, v) -> if (v.length < 300_000) meta["inline:$k"] = v }
-                        NewDownload(url = url, fileName = "$name.mp4", type = i.kind, mime = "video/mp4", size = i.qualities.firstOrNull { it.id == quality }?.estSize ?: 0,
-                            referer = referer, userAgent = userAgent, pageUrl = referer, title = pageTitle, meta = meta, labels = labels)
-                    }
+                    val req = com.movietrack.app.download.Requests.build(i, url, name, folder, quality, audios.toList(), subs.toList(), mode, skipAds,
+                        referer, userAgent, pageTitle, inline)
                     app.downloads.add(req)
                     onQueued()
                 }
