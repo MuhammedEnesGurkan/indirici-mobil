@@ -148,8 +148,8 @@ class DownloadE2ETest {
 
     private fun assertPlayable(e: DownloadEntity, what: String, wantAudio: Boolean = true) {
         val p = probe(output(e))
-        assertEquals("$what: görüntü izi", 1, p.video)
-        if (wantAudio) assertTrue("$what: ses izi yok (${p})", p.audio >= 1)
+        assertEquals("$what: görüntü izi (uyarı: ${e.error})", 1, p.video)
+        if (wantAudio) assertTrue("$what: ses izi yok (${p}, uyarı: ${e.error})", p.audio >= 1)
         assertTrue("$what: süre ${p.durationSec}s", p.durationSec in 5.0..7.5)
     }
 

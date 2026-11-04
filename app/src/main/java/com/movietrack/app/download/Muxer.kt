@@ -49,13 +49,16 @@ object Muxer {
             muxer.start()
             val buf = ByteBuffer.allocateDirect(16 * 1024 * 1024)
             val info = MediaCodec.BufferInfo()
-            val base = srcs.mapNotNull { s -> s.ex.sampleTime.takeIf { it >= 0 } }.minOrNull() ?: 0L
+            // Örnek kaldı mı: sampleTime değil iz numarasına bakılır (AAC ön dolgusu yüzünden ilk ses
+            // örneğinin zamanı negatif olabilir; negatif zamanlı kaynak hiç okunmadan atlanıyordu)
+            fun has(s: Src) = s.ex.sampleTrackIndex >= 0
+            val base = srcs.filter(::has).minOfOrNull { it.ex.sampleTime } ?: 0L
             val last = HashMap<Int, Long>()
             val offset = HashMap<Int, Long>()
             var lastReport = 0L
             while (true) {
                 // Zamanı en küçük örneği seç (izleri iç içe yaz)
-                val s = srcs.filter { it.ex.sampleTime >= 0 }.minByOrNull { it.ex.sampleTime } ?: break
+                val s = srcs.filter(::has).minByOrNull { it.ex.sampleTime } ?: break
                 val ex = s.ex
                 val size = ex.readSampleData(buf, 0)
                 if (size < 0) { ex.advance(); continue }
