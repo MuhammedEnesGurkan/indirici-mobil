@@ -109,7 +109,7 @@ private val CATS = listOf(Category.VIDEO, Category.MUSIC, Category.DOC, Category
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DownloadsScreen(snack: SnackbarHostState, onNew: (DownloadRequest) -> Unit, onOpenDetail: (Long) -> Unit, onOpenBrowser: () -> Unit) {
+fun DownloadsScreen(snack: SnackbarHostState, onNew: (DownloadRequest) -> Unit, onOpenDetail: (Long) -> Unit, onOpenBrowser: () -> Unit, onOpenQueue: () -> Unit) {
     val m = App.instance.downloads
     val all by m.all.collectAsState(initial = null)
     val live by m.live.collectAsState()
@@ -195,6 +195,7 @@ fun DownloadsScreen(snack: SnackbarHostState, onNew: (DownloadRequest) -> Unit, 
                         Box {
                             IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "Menü") }
                             DropdownMenu(menu, { menu = false }) {
+                                DropdownMenuItem({ Text("Sıra ve zamanlayıcı") }, { menu = false; onOpenQueue() })
                                 DropdownMenuItem({ Text("Tümünü duraklat") }, { menu = false; m.pauseAll() })
                                 DropdownMenuItem({ Text("Tümünü sürdür") }, { menu = false; m.resumeAll() })
                                 DropdownMenuItem({ Text("Metin dosyasından bağlantı ekle") }, { menu = false; importTxt.launch(arrayOf("text/*")) })

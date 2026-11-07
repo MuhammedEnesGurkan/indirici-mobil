@@ -101,6 +101,7 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit) {
     Scaffold(
         modifier = Modifier.nestedScroll(bar.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0),
+        bottomBar = { MiniPlayerBar() },
         topBar = {
             LargeTopAppBar(title = { Text("Dosyalar") }, scrollBehavior = bar, actions = {
                 IconButton(onClick = { ui.filesGrid = !grid }) { Icon(if (grid) Icons.Rounded.ViewList else Icons.Rounded.GridView, if (grid) "Liste görünümü" else "Izgara görünümü") }
@@ -143,7 +144,7 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit) {
             items(shown, key = { it.id }) { e ->
                 val size = Format.bytes(e.totalBytes.coerceAtLeast(e.downloadedBytes))
                 val meta = "$size · ${Dates.short(e.finishedAt.takeIf { it > 0 } ?: e.createdAt)}"
-                if (grid) Column(Modifier.clip(RoundedCornerShape(20.dp)).background(c.surfaceContainerLow).combinedClickable(onClick = { Open.open(ctx, e) }, onLongClick = { actions = e })) {
+                if (grid) Column(Modifier.clip(RoundedCornerShape(20.dp)).background(c.surfaceContainerLow).combinedClickable(onClick = { openFile(ctx, e) }, onLongClick = { actions = e })) {
                     val (bg, fg) = categoryColors(categoryOf(e))
                     Box(Modifier.fillMaxWidth().height(104.dp).background(bg), contentAlignment = Alignment.Center) { Icon(categoryIcon(categoryOf(e)), null, tint = fg, modifier = Modifier.size(40.dp)) }
                     Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -153,7 +154,7 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit) {
                         }
                         IconButton(onClick = { actions = e }) { Icon(Icons.Rounded.MoreVert, "Seçenekler: ${e.fileName}") }
                     }
-                } else Row(Modifier.fillMaxWidth().combinedClickable(onClick = { Open.open(ctx, e) }, onLongClick = { actions = e }).heightIn(min = 64.dp).padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                } else Row(Modifier.fillMaxWidth().combinedClickable(onClick = { openFile(ctx, e) }, onLongClick = { actions = e }).heightIn(min = 64.dp).padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     FileThumb(categoryOf(e), size = 44.dp, radius = 12.dp)
                     Column(Modifier.weight(1f).padding(start = 16.dp)) {
@@ -186,7 +187,7 @@ private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (Downlo
                 }
             }
             HorizontalDivider(Modifier.padding(horizontal = 24.dp), color = c.outlineVariant)
-            ActionRow(Icons.Rounded.PlayCircle, "Aç") { onDismiss(); Open.open(ctx, e) }
+            ActionRow(Icons.Rounded.PlayCircle, "Aç") { onDismiss(); openFile(ctx, e) }
             ActionRow(Icons.Rounded.Share, "Paylaş") { onDismiss(); Open.share(ctx, e) }
             ActionRow(Icons.Rounded.Edit, "Yeniden adlandır") { rename = true }
             ActionRow(Icons.Rounded.ContentCopy, "Bağlantıyı kopyala") { onDismiss(); copyText(ctx, e.url) }
@@ -225,3 +226,8 @@ private fun ActionRow(icon: ImageVector, label: String, tint: androidx.compose.u
     }
 }
 
+
+/** Müzik uygulama içinde mini oynatıcıda, diğerleri oynatıcıda ya da ilgili uygulamada açılır. */
+fun openFile(ctx: android.content.Context, e: DownloadEntity) {
+    if (categoryOf(e) == Category.MUSIC) MiniPlayer.play(ctx, e) else Open.open(ctx, e)
+}

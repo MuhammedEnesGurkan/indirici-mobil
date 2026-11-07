@@ -80,6 +80,8 @@ class MainActivity : ComponentActivity() {
     private val tabState = MutableStateFlow("downloads")
     private val pending = MutableStateFlow<DownloadRequest?>(null)
     private val clipboardUrl = MutableStateFlow<String?>(null)
+    private var pasteOnFocus = false
+    private val notifLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,7 +119,8 @@ class MainActivity : ComponentActivity() {
         i ?: return
         // Yalnızca hata ayıklama derlemesinde: CI ekran görüntüleri için karşılamayı atla
         if (BuildConfig.DEBUG && i.getBooleanExtra("skip_onboarding", false)) App.instance.ui.onboarded = true
-        i.getStringExtra("tab")?.let { tabState.value = if (it == "discover") "browser" else it }
+        i.getStringExtra("tab")?.let { tabState.value = when (it) { "discover" -> "browser"; "library" -> "files"; else -> it } }
+        if (i.action == com.indirici.sys.IndiriciWidget.ACTION_PASTE) pasteOnFocus = true
         when (i.action) {
             Intent.ACTION_SEND -> {
                 val text = i.getStringExtra(Intent.EXTRA_TEXT) ?: return
@@ -129,6 +132,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && pasteOnFocus) {
+            // Widget'taki "Panodan indir": pano yalnızca odaktaki uygulamaya açık
+            pasteOnFocus = false
+            val u = com.indirici.ui.clipText(this)
+            pending.value = DownloadRequest(url = u ?: "", fromClipboard = u != null)
+            u?.let { App.instance.settings.lastClipboard = it }
+            return
+        }
         if (!hasFocus || !App.instance.settings.clipboardDetect) return
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val text = try { cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() } catch (_: Exception) { null } ?: return
@@ -148,6 +159,12 @@ class MainActivity : ComponentActivity() {
         val snack = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
         var detail by remember { mutableStateOf<Long?>(null) }
+        var queue by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            // Bildirim izni yoksa iste (karşılama atlandıysa da): ilerleme bildirimi buna bağlı
+            if (Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         var crash by remember { mutableStateOf(java.io.File(filesDir, "last_crash.txt").takeIf { it.exists() }?.readText()) }
 
         LaunchedEffect(clip) {
@@ -159,7 +176,9 @@ class MainActivity : ComponentActivity() {
         val newDownload: (DownloadRequest) -> Unit = { pending.value = it }
 
         val d = detail
-        if (d != null) {
+        if (queue) {
+            com.indirici.ui.QueueScreen(onBack = { queue = false })
+        } else if (d != null) {
             DetailScreen(d, onBack = { detail = null })
         } else {
             val dests = listOf(
@@ -186,8 +205,8 @@ class MainActivity : ComponentActivity() {
                     when (t) {
                         "browser" -> Box(Modifier.statusBarsPadding()) { BrowserScreen(snack, onDownload = newDownload) }
                         "files" -> FilesScreen(onNew = newDownload, onOpenDownloads = { tabState.value = "downloads" })
-                        "settings" -> SettingsScreen()
-                        else -> DownloadsScreen(snack, onNew = newDownload, onOpenDetail = { detail = it }, onOpenBrowser = { tabState.value = "browser" })
+                        "settings" -> SettingsScreen(onOpenQueue = { queue = true })
+                        else -> DownloadsScreen(snack, onNew = newDownload, onOpenDetail = { detail = it }, onOpenBrowser = { tabState.value = "browser" }, onOpenQueue = { queue = true })
                     }
                 }
             }

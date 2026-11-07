@@ -39,7 +39,9 @@ class App : Application() {
         ui = UiPrefs(this)
         Notifications.createChannels(this)
         downloads = DownloadManager(this)
+        com.indirici.sys.Scheduler.install(this)
         downloads.restore()
+        com.indirici.sys.IndiriciWidget.watch(this)
     }
 
     companion object {

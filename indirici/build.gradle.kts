@@ -23,7 +23,7 @@ android {
     }
     sourceSets["main"].apply {
         java.srcDirs("$shared/download", "$shared/data", "$shared/browser", "$shared/util", "$shared/player")
-        assets.srcDirs("../app/src/main/assets")
+        assets.srcDirs("../app/src/main/assets", "src/main/assets")
     }
     buildTypes {
         release {
@@ -54,6 +54,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.webkit:webkit:1.12.1")
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-material3:1.1.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")

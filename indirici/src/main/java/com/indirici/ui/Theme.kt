@@ -18,7 +18,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import com.movietrack.app.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +52,86 @@ class UiPrefs(context: Context) {
     var filesGrid: Boolean
         get() = p.getBoolean("filesGrid", false)
         set(v) { p.edit().putBoolean("filesGrid", v).apply(); changed() }
+    /** Renk seçici: SEEDS içindeki sıra (0 = varsayılan çivit). */
+    var seed: Int
+        get() = p.getInt("seed", 0)
+        set(v) { p.edit().putInt("seed", v).apply(); changed() }
+
+    // Zamanlayıcı (dakika cinsinden saat, günler bit maskesi: bit0 = Pazartesi)
+    var schedOn: Boolean
+        get() = p.getBoolean("schedOn", false)
+        set(v) { p.edit().putBoolean("schedOn", v).apply(); changed() }
+    var schedStart: Int
+        get() = p.getInt("schedStart", 2 * 60)
+        set(v) { p.edit().putInt("schedStart", v).apply(); changed() }
+    var schedEnd: Int
+        get() = p.getInt("schedEnd", 7 * 60)
+        set(v) { p.edit().putInt("schedEnd", v).apply(); changed() }
+    var schedDays: Int
+        get() = p.getInt("schedDays", 0b1111111)
+        set(v) { p.edit().putInt("schedDays", v).apply(); changed() }
+    var schedCharging: Boolean
+        get() = p.getBoolean("schedCharging", false)
+        set(v) { p.edit().putBoolean("schedCharging", v).apply(); changed() }
+}
+
+/** Renk seçicideki tohum renkler. İlki elle ayarlanmış marka paletini kullanır. */
+val SEEDS = listOf(
+    "Çivit" to Color(0xFF4355B9), "Okyanus" to Color(0xFF00658E), "Orman" to Color(0xFF3B6939),
+    "Kehribar" to Color(0xFF825500), "Gül" to Color(0xFF9C4146),
+)
+
+// --- Tohumdan tonal palet (CIELAB tonları, M3 "tonal spot" düzeni) ---
+private fun lin(c: Double) = if (c <= 0.04045) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4)
+private fun gam(c: Double) = if (c <= 0.0031308) 12.92 * c else 1.055 * Math.pow(c, 1 / 2.4) - 0.055
+private fun f(t: Double) = if (t > 216.0 / 24389) Math.cbrt(t) else (24389.0 / 27 * t + 16) / 116
+private fun fi(t: Double) = if (t * t * t > 216.0 / 24389) t * t * t else (116 * t - 16) / (24389.0 / 27)
+
+/** Rengin ton (L*), renklilik ve açı değerleri. */
+private fun lch(c: Color): Triple<Double, Double, Double> {
+    val r = lin(c.red.toDouble()); val g = lin(c.green.toDouble()); val b = lin(c.blue.toDouble())
+    val x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+    val y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    val z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+    val l = 116 * f(y) - 16
+    val a = 500 * (f(x) - f(y)); val bb = 200 * (f(y) - f(z))
+    return Triple(l, Math.hypot(a, bb), Math.toDegrees(Math.atan2(bb, a)))
+}
+
+/** Verilen ton ve açıda, ekranda gösterilebilen en yüksek renklilikle renk. */
+private fun tone(hue: Double, chroma: Double, l: Double): Color {
+    var ch = chroma
+    while (true) {
+        val a = ch * Math.cos(Math.toRadians(hue)); val b = ch * Math.sin(Math.toRadians(hue))
+        val fy = (l + 16) / 116; val fx = fy + a / 500; val fz = fy - b / 200
+        val x = fi(fx) * 0.95047; val y = if (l > 8) fy * fy * fy else l / (24389.0 / 27); val z = fi(fz) * 1.08883
+        val r = 3.2406 * x - 1.5372 * y - 0.4986 * z
+        val g = -0.9689 * x + 1.8758 * y + 0.0415 * z
+        val bl = 0.0557 * x - 0.2040 * y + 1.0570 * z
+        if ((r in -0.001..1.001 && g in -0.001..1.001 && bl in -0.001..1.001) || ch <= 0.5)
+            return Color(gam(r.coerceIn(0.0, 1.0)).toFloat(), gam(g.coerceIn(0.0, 1.0)).toFloat(), gam(bl.coerceIn(0.0, 1.0)).toFloat())
+        ch -= 1.0
+    }
+}
+
+fun seedScheme(seed: Color, dark: Boolean): ColorScheme {
+    val (_, c0, h) = lch(seed)
+    val pc = maxOf(c0, 48.0)
+    fun p(t: Int) = tone(h, pc, t.toDouble())
+    fun s(t: Int) = tone(h, 16.0, t.toDouble())
+    fun t(t: Int) = tone(h + 60, 24.0, t.toDouble())
+    val base = if (dark) DarkColors else LightColors
+    return if (!dark) base.copy(
+        primary = p(40), onPrimary = Color.White, primaryContainer = p(90), onPrimaryContainer = p(10),
+        secondary = s(40), onSecondary = Color.White, secondaryContainer = s(90), onSecondaryContainer = s(10),
+        tertiary = t(40), onTertiary = Color.White, tertiaryContainer = t(90), onTertiaryContainer = t(10),
+        inversePrimary = p(80), surfaceTint = p(40),
+    ) else base.copy(
+        primary = p(80), onPrimary = p(20), primaryContainer = p(30), onPrimaryContainer = p(90),
+        secondary = s(80), onSecondary = s(20), secondaryContainer = s(30), onSecondaryContainer = s(90),
+        tertiary = t(80), onTertiary = t(20), tertiaryContainer = t(30), onTertiaryContainer = t(90),
+        inversePrimary = p(40), surfaceTint = p(80),
+    )
 }
 
 // Marka paleti (tasarım tokenları): çekirdek çivit #4355B9, vurgu turkuaz #006A60
@@ -91,17 +176,28 @@ val IncognitoColors = DarkColors.copy(
     secondaryContainer = Color(0xFF4A4260), onSecondaryContainer = Color(0xFFECE6F4),
 )
 
+// Roboto Flex (değişken yazı tipi): gövde normal genişlikte, başlıklar hafif geniş
+@OptIn(ExperimentalTextApi::class)
+private fun flex(width: Float) = FontFamily(
+    listOf(300, 400, 500, 600, 700).map { w ->
+        Font(R.font.roboto_flex, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w), FontVariation.width(width)))
+    },
+)
+val Flex = flex(100f)
+val FlexWide = flex(112f)
+
 // Hız, boyut ve süre her yerde eşit genişlikli rakamla yazılır
 private val Base = Typography()
-private fun TextStyle.t(size: Int, line: Int, w: FontWeight, ls: Double = 0.0) =
-    copy(fontSize = size.sp, lineHeight = line.sp, fontWeight = w, letterSpacing = ls.sp, fontFeatureSettings = "tnum")
+private fun TextStyle.t(size: Int, line: Int, w: FontWeight, ls: Double = 0.0, family: FontFamily = Flex) =
+    copy(fontSize = size.sp, lineHeight = line.sp, fontWeight = w, letterSpacing = ls.sp, fontFeatureSettings = "tnum", fontFamily = family)
 
 val AppTypography = Typography(
     displayLarge = Base.displayLarge.t(57, 64, FontWeight.Normal, -0.25),
     displayMedium = Base.displayMedium.t(45, 52, FontWeight.Normal),
-    headlineLarge = Base.headlineLarge.t(32, 40, FontWeight.Medium, -0.2),
-    headlineMedium = Base.headlineMedium.t(28, 36, FontWeight.Medium),
-    headlineSmall = Base.headlineSmall.t(24, 32, FontWeight.Medium),
+    displaySmall = Base.displaySmall.t(36, 44, FontWeight.Normal, family = FlexWide),
+    headlineLarge = Base.headlineLarge.t(32, 40, FontWeight.Medium, -0.2, FlexWide),
+    headlineMedium = Base.headlineMedium.t(28, 36, FontWeight.Medium, family = FlexWide),
+    headlineSmall = Base.headlineSmall.t(24, 32, FontWeight.Medium, family = FlexWide),
     titleLarge = Base.titleLarge.t(22, 28, FontWeight.Medium),
     titleMedium = Base.titleMedium.t(16, 24, FontWeight.SemiBold, 0.1),
     titleSmall = Base.titleSmall.t(14, 20, FontWeight.SemiBold, 0.1),
@@ -133,6 +229,7 @@ fun IndiriciTheme(prefs: UiPrefs, content: @Composable () -> Unit) {
     val ctx = LocalContext.current
     var scheme = when {
         prefs.dynamicColor && Build.VERSION.SDK_INT >= 31 -> if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+        prefs.seed in 1 until SEEDS.size -> seedScheme(SEEDS[prefs.seed].second, dark)
         dark -> DarkColors
         else -> LightColors
     }

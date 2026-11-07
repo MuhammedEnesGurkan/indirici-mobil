@@ -8,6 +8,7 @@ import com.movietrack.app.data.DownloadEntity
 import com.movietrack.app.data.Status
 import com.movietrack.app.util.Category
 import com.movietrack.app.util.Format
+import com.movietrack.app.util.KV
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +55,20 @@ class DownloadManager(private val app: App) {
 
     val activeCount get() = jobs.size
 
+    /** Süren indirmelerin adları (bildirim için). */
+    val runningNames = ConcurrentHashMap<Long, String>()
+
+    /** Yeni indirme başlatılabilir mi (ör. zamanlayıcı penceresi). Varsayılan: her zaman. */
+    @Volatile var gate: () -> Boolean = { true }
+
+    /** Sıradakilerin başlama önceliği: meta'daki "prio" küçükten büyüğe; olmayanlar eklenme sırasında. */
+    fun setPriorities(ids: List<Long>) = scope.launch {
+        ids.forEachIndexed { i, id ->
+            dao.get(id)?.let { e -> e.meta = KV.encode(KV.decode(e.meta) + ("prio" to i.toString())); dao.update(e) }
+        }
+        schedule()
+    }
+
     fun restore() {
         scope.launch {
             // Uygulama kapanırken süren işler kaldığı yerden devam eder
@@ -89,7 +104,9 @@ class DownloadManager(private val app: App) {
     fun schedule() {
         scope.launch {
             lock.withLock {
+                if (!gate()) return@withLock
                 val waiting = dao.byStatus(listOf(Status.QUEUED, Status.WAITING_WIFI))
+                    .sortedBy { KV.decode(it.meta)["prio"]?.toLongOrNull() ?: Long.MAX_VALUE }
                 for (e in waiting) {
                     if (jobs.size >= app.settings.maxConcurrent) break
                     if (jobs.containsKey(e.id)) continue
@@ -110,8 +127,10 @@ class DownloadManager(private val app: App) {
         dao.update(e)
         val job = scope.launch { run(e) }
         jobs[e.id] = job
+        runningNames[e.id] = e.fileName
         job.invokeOnCompletion {
             jobs.remove(e.id)
+            runningNames.remove(e.id)
             _live.update { it - e.id }
             schedule()
         }

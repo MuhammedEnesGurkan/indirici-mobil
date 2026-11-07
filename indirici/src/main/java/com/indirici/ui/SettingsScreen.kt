@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
@@ -84,7 +87,7 @@ import com.movietrack.app.util.Format
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onOpenQueue: () -> Unit) {
     var page by rememberSaveable { mutableStateOf<String?>(null) }
     val app = App.instance
     val v1 by app.settings.version.collectAsState()
@@ -92,7 +95,7 @@ fun SettingsScreen() {
     (v1 + v2).hashCode()
     BackHandler(page != null) { page = null }
     when (page) {
-        null -> Main { page = it }
+        null -> Main { if (it == "queue") onOpenQueue() else page = it }
         else -> Sub(page!!, onBack = { page = null })
     }
 }
@@ -107,6 +110,7 @@ private fun Main(onOpen: (String) -> Unit) {
     val groups = listOf(
         Group("general", Icons.Rounded.Tune, "Genel", "Pano algılama"),
         Group("downloads", Icons.Rounded.Download, "İndirmeler", "Klasör, hız, aynı anda indirme, diller"),
+        Group("queue", Icons.Rounded.Schedule, "Sıra ve zamanlayıcı", "Başlama sırası, saat aralığı, şarj"),
         Group("browser", Icons.Rounded.Public, "Tarayıcı", "Arama motoru, reklam engelleme, masaüstü sitesi"),
         Group("look", Icons.Rounded.Palette, "Görünüm", "Tema, tam siyah, duvar kağıdı renkleri"),
         Group("about", Icons.Rounded.Info, "Hakkında", "Sürüm ${BuildConfig.VERSION_NAME}"),
@@ -309,6 +313,24 @@ private fun LookPage() {
         }
         SwitchItem("Tam siyah", if (dark) "AMOLED ekranda pil tasarrufu" else "Koyu temada geçerli", ui.amoled) { ui.amoled = it }
         SwitchItem("Duvar kağıdı renkleri", if (Build.VERSION.SDK_INT >= 31) "Renkleri duvar kağıdından al" else "Android 12 ve üstünde", ui.dynamicColor, enabled = Build.VERSION.SDK_INT >= 31) { ui.dynamicColor = it }
+    }
+    Section("Renk") {
+        val enabled = !(ui.dynamicColor && Build.VERSION.SDK_INT >= 31)
+        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = 12.dp, vertical = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+            SEEDS.forEachIndexed { i, (name, col) ->
+                val on = ui.seed == i
+                val preview = if (i == 0) (if (dark) DarkColors else LightColors) else seedScheme(col, dark)
+                Box(Modifier.size(52.dp).clip(RoundedCornerShape(26.dp))
+                    .then(if (on) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(26.dp)).padding(5.dp) else Modifier)
+                    .clip(RoundedCornerShape(26.dp)).background(preview.primary)
+                    .selectable(on, enabled = enabled, role = Role.RadioButton) { ui.seed = i }
+                    .semantics { contentDescription = name },
+                    contentAlignment = Alignment.BottomCenter) {
+                    Box(Modifier.fillMaxWidth().fillMaxHeight(0.5f).background(preview.tertiaryContainer))
+                }
+            }
+        }
+        if (!enabled) Item("Duvar kağıdı renkleri açık", "Renk seçmek için önce onu kapat")
     }
     Section("Önizleme") {
         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -42,22 +42,46 @@ object Notifications {
         PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java).putExtra("tab", tab).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
+    /** Uygulamaya özel ekler (ör. Duraklat/İptal düğmeleri). */
+    @Volatile var decorate: (Context, NotificationCompat.Builder) -> Unit = { _, _ -> }
+
     fun progress(ctx: Context): Notification {
         val m = App.instance.downloads
-        val live = m.live.value.values
+        val liveMap = m.live.value
+        val live = liveMap.values
         val bytes = live.sumOf { it.bytes }
         val total = live.sumOf { it.total }
         val speed = live.sumOf { it.speed }
+        val eta = live.maxOfOrNull { it.etaSec } ?: 0L
         val pct = if (total > 0) (bytes * 100 / total).toInt() else 0
-        return NotificationCompat.Builder(ctx, CH_PROGRESS)
+        val names = m.runningNames
+        val title = if (names.size == 1) names.values.first() else "${m.activeCount} indirme sürüyor"
+        val text = listOf(
+            Format.bytes(bytes) + if (total > 0) " / ${Format.bytes(total)}" else "",
+            if (speed > 0) "${Format.bytes(speed)}/sn" else "",
+            if (eta > 0) (if (eta < 60) "$eta sn kaldı" else if (eta < 3600) "${eta / 60} dk kaldı" else "${eta / 3600} sa kaldı") else "",
+        ).filter { it.isNotBlank() }.joinToString(" · ")
+        val b = NotificationCompat.Builder(ctx, CH_PROGRESS)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("${m.activeCount} indirme sürüyor")
-            .setContentText(listOf(Format.bytes(bytes) + if (total > 0) " / ${Format.bytes(total)}" else "", Format.speed(speed)).filter { it.isNotBlank() }.joinToString(" · "))
+            .setContentTitle(title)
+            .setContentText(text.ifBlank { "Bağlanıyor…" })
+            .setSubText(if (total > 0) "%$pct" else null)
             .setProgress(100, pct, total <= 0)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openApp(ctx))
-            .build()
+        if (names.size > 1) {
+            val style = NotificationCompat.InboxStyle().setBigContentTitle(title).setSummaryText(text)
+            names.entries.take(5).forEach { (id, n) ->
+                val p = liveMap[id]
+                val pp = if (p != null && p.total > 0) "%${p.bytes * 100 / p.total} · " else ""
+                style.addLine(pp + n)
+            }
+            b.setStyle(style)
+        }
+        decorate(ctx, b)
+        return b.build()
     }
 
     fun finished(ctx: Context, e: DownloadEntity, error: String?) {

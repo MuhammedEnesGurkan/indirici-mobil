@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">indirici</string>
     <string name="download_folder" translatable="false">indirici</string>
+    <string name="widget_desc">Aktif indirmeler ve panodan indirme</string>
 </resources>
