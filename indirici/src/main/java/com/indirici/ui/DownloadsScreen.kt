@@ -208,7 +208,8 @@ fun DownloadsScreen(snack: SnackbarHostState, onNew: (DownloadRequest) -> Unit, 
             }
         },
         floatingActionButton = {
-            if (!selecting) ExtendedFloatingActionButton(
+            // Liste boşken boş durumun kendi düğmeleri var; FAB içeriğin üstüne binmesin
+            if (!selecting && items.isNotEmpty()) ExtendedFloatingActionButton(
                 onClick = { onNew(DownloadRequest()) },
                 expanded = remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }.value,
                 icon = { Icon(Icons.Rounded.Add, null) }, text = { Text("Yeni indirme") },

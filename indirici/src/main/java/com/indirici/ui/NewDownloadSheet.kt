@@ -11,6 +11,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -264,9 +265,9 @@ fun NewDownloadSheet(req: DownloadRequest, onDismiss: () -> Unit, onQueued: (Str
             val ok = info != null && info?.drm == false && info?.live == false && name.isNotBlank() && !loading
             Row(Modifier.fillMaxWidth().padding(16.dp).navigationBarsPadding(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick = { queue(false) }, enabled = ok, modifier = Modifier.weight(1f).height(48.dp)) { Text("Sıraya ekle") }
-                Button(onClick = { queue(true) }, enabled = ok, modifier = Modifier.weight(1f).height(48.dp)) {
-                    Icon(Icons.Rounded.Download, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
-                    Text(if (info?.let { noAudio(it, quality, audios) } == true) "Yine de indir" else "Şimdi indir")
+                Button(onClick = { queue(true) }, enabled = ok, modifier = Modifier.weight(1f).height(48.dp), contentPadding = PaddingValues(horizontal = 12.dp)) {
+                    Icon(Icons.Rounded.Download, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+                    Text(if (info?.let { noAudio(it, quality, audios) } == true) "Yine de indir" else "Şimdi indir", maxLines = 1, softWrap = false)
                 }
             }
         }
