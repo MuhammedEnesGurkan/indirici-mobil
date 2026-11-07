@@ -72,6 +72,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
 
         // 2) Akış dosyaları
         ctx.phase = "Birleştiriliyor"
+        ctx.segTotal = 1000; ctx.segDone = 0
         ctx.emit()
         e.status = com.movietrack.app.data.Status.MERGING
         ctx.saveNow()
@@ -86,13 +87,42 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             val name = "$base.mp4"
             val out = OutputStore.create(app, name, "video/mp4", folder)
             try {
-                val audioTracks = out.openRw(app).use { pfd ->
+                // MP4 önce uygulamanın kendi klasörüne yazılır: MediaMuxer çok sayıda küçük yazma ve geri
+                // dönüp yazma yapar; bunlar İndirilenler'e (MediaStore/FUSE) doğrudan gidince çok yavaşlıyordu.
+                // Bitince tek seferde, büyük bloklarla asıl yere kopyalanır.
+                val tmp = File(dir, "out.mp4")
+                val job = coroutineContext[kotlinx.coroutines.Job]
+                val totalUs = (plans.firstOrNull { it.role == "main" } ?: plans.first()).segments
+                    .filter { !(skipAds && it.isAd) }.sumOf { it.duration } * 1_000_000
+                ctx.segTotal = 1000; ctx.segDone = 0
+                val audioTracks = FileOutputStream(tmp).use { fos ->
                     Muxer.mux(plans.indices.map { si ->
                         val p = plans[si]
                         // Ayrı ses izi seçildiyse ana akıştaki gömülü sesi yalnızca dil bilgisi yoksa al
                         Muxer.Input(streamFiles[si].path, takeVideo = p.role == "main", takeAudio = p.role == "audio" || plans.none { it.role == "audio" } || meta["muxedAudio"] == "1", lang = p.lang)
-                    }, pfd.fileDescriptor)
+                    }, fos.fd, totalUs.toLong(), active = { job?.isActive != false }) { f ->
+                        ctx.segDone = (f * 900).toInt(); ctx.emit()
+                    }
                 }
+                // Yer açmak için birleştirilmiş akış dosyalarını sil, sonra kopyala
+                streamFiles.forEach { it.delete() }
+                ctx.phase = "Kaydediliyor"; ctx.segDone = 900; ctx.emit()
+                val len = tmp.length().coerceAtLeast(1)
+                out.openRw(app).use { pfd ->
+                    FileOutputStream(pfd.fileDescriptor).use { os ->
+                        FileInputStream(tmp).use { ins ->
+                            val b = ByteArray(4 shl 20)
+                            var copied = 0L
+                            while (true) {
+                                val r = ins.read(b); if (r < 0) break
+                                os.write(b, 0, r); copied += r
+                                ctx.segDone = 900 + (copied * 100 / len).toInt(); ctx.emit()
+                                coroutineContext.ensureActive()
+                            }
+                        }
+                    }
+                }
+                tmp.delete()
                 out.publish(app)
                 e.outputUri = out.encode()
                 e.fileName = name
@@ -100,12 +130,14 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 if (audioTracks == 0) e.error = "Uyarı: dosyada ses izi yok. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin."
             } catch (t: Throwable) {
                 out.delete(app)
+                File(dir, "out.mp4").delete()
+                if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
                 e.error = "Uyarı: MP4'e birleştirilemedi (${t.message}); dosyalar ayrı kaydedildi."
             }
         }
         if (!merged) {
             for ((si, p) in plans.withIndex()) {
-                val f = streamFiles[si]
+                val f = streamFiles[si].takeIf { it.exists() } ?: concat(si, p, skipAds)
                 val ext = if (p.fmp4) (if (p.role == "audio") "m4a" else "mp4") else "ts"
                 val name = if (p.role == "audio") "$base.aud-${Lang.normalize(p.lang).ifEmpty { "und" }}.$ext" else "$base.$ext"
                 val out = OutputStore.create(app, name, if (ext == "ts") "video/mp2t" else if (ext == "m4a") "audio/mp4" else "video/mp4", folder)

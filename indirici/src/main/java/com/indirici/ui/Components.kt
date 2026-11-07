@@ -148,7 +148,10 @@ fun metaLine(e: DownloadEntity, p: LiveProgress?): String {
     return when (s) {
         Kind.DONE -> listOf(Format.bytes(if (total > 0) total else bytes), Dates.short(e.finishedAt.takeIf { it > 0 } ?: e.createdAt)).joinToString(" · ")
         Kind.ERROR, Kind.EXPIRED -> listOfNotNull(e.error?.lineSequence()?.firstOrNull()?.take(60), sizePart(bytes, total)).joinToString(" · ")
-        Kind.MERGING -> p?.phase?.takeIf { it.isNotBlank() } ?: "Ses ve görüntü tek dosyada birleştiriliyor"
+        Kind.MERGING -> when (p?.phase) {
+            "Kaydediliyor" -> "İndirilenler klasörüne kaydediliyor"
+            else -> "Ses ve görüntü tek dosyada birleştiriliyor"
+        }
         else -> listOfNotNull(
             sizePart(bytes, total),
             p?.speed?.takeIf { it > 0 && s == Kind.DOWNLOADING }?.let { speed(it) },
@@ -271,7 +274,8 @@ fun DownloadProgress(e: DownloadEntity, p: LiveProgress?, modifier: Modifier = M
     val s = statusOf(e, p)
     when (s.kind) {
         Kind.DOWNLOADING -> WavyProgress(fraction(e, p), modifier)
-        Kind.CONNECTING, Kind.MERGING -> IndeterminateProgress(modifier)
+        Kind.MERGING -> if ((p?.segTotal ?: 0) > 0) WavyProgress(fraction(e, p), modifier) else IndeterminateProgress(modifier)
+        Kind.CONNECTING -> IndeterminateProgress(modifier)
         Kind.DONE -> {}
         else -> FlatProgress(fraction(e, p), s.kind.color(), modifier)
     }
@@ -357,7 +361,7 @@ fun DownloadCard(
             if (s.kind != Kind.DONE) DownloadProgress(e, p, Modifier.padding(top = 4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StatusLabel(s, Modifier.weight(1f))
-                if (s.kind != Kind.DONE && pct > 0 && s.kind != Kind.MERGING) Text("%$pct", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (s.kind != Kind.DONE && pct > 0) Text("%$pct", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         QuickAction(s.kind, onPause, onResume, onOpen, onRefreshLink)

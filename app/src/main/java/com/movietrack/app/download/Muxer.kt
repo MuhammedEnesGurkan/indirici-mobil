@@ -15,8 +15,12 @@ import java.nio.ByteBuffer
 object Muxer {
     data class Input(val path: String, val takeVideo: Boolean, val takeAudio: Boolean, val lang: String = "")
 
-    /** @return eklenen ses izi sayısı */
-    fun mux(inputs: List<Input>, out: FileDescriptor, onProgress: (Float) -> Unit = {}): Int {
+    /**
+     * @param durationHintUs kaynağın süresi (liste toplamı); TS dosyalarında kapsayıcı süre vermediği için ilerleme buna göre
+     * @param active false dönerse birleştirme durdurulur (duraklat/iptal)
+     * @return eklenen ses izi sayısı
+     */
+    fun mux(inputs: List<Input>, out: FileDescriptor, durationHintUs: Long = 0, active: () -> Boolean = { true }, onProgress: (Float) -> Unit = {}): Int {
         val muxer = MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>)
         val srcs = ArrayList<Src>()
@@ -46,40 +50,50 @@ object Muxer {
                 if (map.isEmpty()) ex.release() else srcs += Src(ex, map, audio)
             }
             require(srcs.isNotEmpty()) { "Birleştirilecek iz bulunamadı" }
+            if (durationHintUs > 0) durationUs = maxOf(durationUs, durationHintUs)
             muxer.start()
             val buf = ByteBuffer.allocateDirect(16 * 1024 * 1024)
             val info = MediaCodec.BufferInfo()
             // Örnek kaldı mı: sampleTime değil iz numarasına bakılır (AAC ön dolgusu yüzünden ilk ses
             // örneğinin zamanı negatif olabilir; negatif zamanlı kaynak hiç okunmadan atlanıyordu)
             fun has(s: Src) = s.ex.sampleTrackIndex >= 0
-            val base = srcs.filter(::has).minOfOrNull { it.ex.sampleTime } ?: 0L
-            val last = HashMap<Int, Long>()
-            val offset = HashMap<Int, Long>()
+            var base = Long.MAX_VALUE
+            for (s in srcs) if (has(s)) base = minOf(base, s.ex.sampleTime)
+            if (base == Long.MAX_VALUE) base = 0L
+            // Hedef iz başına son zaman ve kaydırma (dizi: HashMap kutulamasından kaçınılır)
+            val nTracks = srcs.sumOf { it.map.size }
+            val last = LongArray(nTracks) { Long.MIN_VALUE }
+            val offset = LongArray(nTracks)
             var lastReport = 0L
+            var n = 0
             while (true) {
-                // Zamanı en küçük örneği seç (izleri iç içe yaz)
-                val s = srcs.filter(::has).minByOrNull { it.ex.sampleTime } ?: break
+                // Zamanı en küçük örneği seç (izleri iç içe yaz); tek kaynakta doğrudan o
+                var s: Src? = null
+                var best = Long.MAX_VALUE
+                for (c in srcs) if (has(c)) { val t = c.ex.sampleTime; if (s == null || t < best) { s = c; best = t } }
+                if (s == null) break
+                if ((++n and 1023) == 0 && !active()) throw java.util.concurrent.CancellationException("Birleştirme durduruldu")
                 val ex = s.ex
                 val size = ex.readSampleData(buf, 0)
                 if (size < 0) { ex.advance(); continue }
                 val track = ex.sampleTrackIndex
                 val dst = s.map[track]
                 if (dst != null) {
-                    var t = ex.sampleTime - base + (offset[dst] ?: 0)
+                    var t = ex.sampleTime - base + offset[dst]
                     val prev = last[dst]
                     // Kesintide zaman sıfırlanırsa (reklam/periyot) kaydır
-                    if (prev != null && t < prev - 1_000_000) {
+                    if (prev != Long.MIN_VALUE && t < prev - 1_000_000) {
                         val add = prev - t + 20_000
-                        offset[dst] = (offset[dst] ?: 0) + add
+                        offset[dst] += add
                         t += add
                     }
-                    if (track in s.audio && prev != null && t <= prev) t = prev + 1
+                    if (track in s.audio && prev != Long.MIN_VALUE && t <= prev) t = prev + 1
                     if (t < 0) t = 0
                     val flags = if (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
                     info.set(0, size, t, flags)
                     muxer.writeSampleData(dst, buf, info)
-                    last[dst] = maxOf(prev ?: 0, t)
-                    if (durationUs > 0 && t - lastReport > 2_000_000) { lastReport = t; onProgress((t.toFloat() / durationUs).coerceIn(0f, 1f)) }
+                    last[dst] = if (prev == Long.MIN_VALUE) t else maxOf(prev, t)
+                    if (durationUs > 0 && t - lastReport > 1_000_000) { lastReport = t; onProgress((t.toFloat() / durationUs).coerceIn(0f, 1f)) }
                 }
                 ex.advance()
             }
