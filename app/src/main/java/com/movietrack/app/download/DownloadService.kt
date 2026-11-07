@@ -53,10 +53,19 @@ object Notifications {
         val total = live.sumOf { it.total }
         val speed = live.sumOf { it.speed }
         val eta = live.maxOfOrNull { it.etaSec } ?: 0L
-        val pct = if (total > 0) (bytes * 100 / total).toInt() else 0
+        // Uygulamadaki çubukla aynı ölçü: parça/aşama ilerlemesi varsa o (birleştirme, altyazı), yoksa bayt
+        fun frac(p: LiveProgress): Float? = when {
+            p.segTotal > 0 -> p.segDone.toFloat() / p.segTotal
+            p.total > 0 -> p.bytes.toFloat() / p.total
+            else -> null
+        }
+        val fracs = live.mapNotNull { frac(it) }
+        val pct = if (fracs.isNotEmpty()) (fracs.average() * 100).toInt().coerceIn(0, 100) else 0
         val names = m.runningNames
         val title = if (names.size == 1) names.values.first() else "${m.activeCount} indirme sürüyor"
-        val text = listOf(
+        // Tek indirme indirme dışı bir aşamadaysa (birleştirme, altyazı) metin o aşamayı söyler
+        val phase = live.singleOrNull()?.phase?.takeIf { it.isNotBlank() && it != "İndiriliyor" }
+        val text = phase ?: listOf(
             Format.bytes(bytes) + if (total > 0) " / ${Format.bytes(total)}" else "",
             if (speed > 0) "${Format.bytes(speed)}/sn" else "",
             if (eta > 0) (if (eta < 60) "$eta sn kaldı" else if (eta < 3600) "${eta / 60} dk kaldı" else "${eta / 3600} sa kaldı") else "",
@@ -65,8 +74,8 @@ object Notifications {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text.ifBlank { "Bağlanıyor…" })
-            .setSubText(if (total > 0) "%$pct" else null)
-            .setProgress(100, pct, total <= 0)
+            .setSubText(if (fracs.isNotEmpty()) "%$pct" else null)
+            .setProgress(100, pct, fracs.isEmpty())
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -75,7 +84,7 @@ object Notifications {
             val style = NotificationCompat.InboxStyle().setBigContentTitle(title).setSummaryText(text)
             names.entries.take(5).forEach { (id, n) ->
                 val p = liveMap[id]
-                val pp = if (p != null && p.total > 0) "%${p.bytes * 100 / p.total} · " else ""
+                val pp = p?.let { frac(it) }?.let { "%${(it * 100).toInt()} · " } ?: ""
                 style.addLine(pp + n)
             }
             b.setStyle(style)

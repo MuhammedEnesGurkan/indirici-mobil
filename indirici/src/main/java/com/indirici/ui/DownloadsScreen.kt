@@ -317,7 +317,14 @@ private fun Summary(items: List<DownloadEntity>, live: Map<Long, com.movietrack.
     ) {
         Icon(Icons.Rounded.Speed, null, tint = c.onPrimaryContainer, modifier = Modifier.size(32.dp))
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(if (total > 0) speed(total) else "Bağlanıyor…", style = MaterialTheme.typography.headlineSmall, color = c.onPrimaryContainer)
+            // Hız yoksa gerçek aşamayı yaz (birleştirmede "Bağlanıyor" yanıltıcıydı)
+            val idle = when {
+                items.any { it.status == Status.MERGING } -> live.values.firstOrNull { it.phase == "Altyazılar indiriliyor" }?.let { "Altyazılar iniyor" } ?: "Birleştiriliyor"
+                items.any { it.status == Status.WAITING_WIFI } && running.isEmpty() -> "Ağ bekleniyor"
+                running.isEmpty() -> "Sırada"
+                else -> "Bağlanıyor…"
+            }
+            Text(if (total > 0) speed(total) else idle, style = MaterialTheme.typography.headlineSmall, color = c.onPrimaryContainer)
             Text("$n indirme sürüyor" + if (left > 0) " · tümü ~${eta(left).removeSuffix(" kaldı")}" else "", style = MaterialTheme.typography.bodySmall, color = c.onPrimaryContainer)
         }
         Button(onClick = { m.pauseAll() }, colors = ButtonDefaults.buttonColors(c.onPrimaryContainer, c.primaryContainer), contentPadding = PaddingValues(horizontal = 16.dp)) {
