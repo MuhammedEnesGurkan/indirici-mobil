@@ -119,7 +119,8 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 e.outputUri = out.encode()
                 e.fileName = name
                 merged = true
-                if (audioTracks == 0) e.error = "Uyarı: dosyada ses yok ya da eksik. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin."
+                if (audioTracks == 0) e.error = "Uyarı: dosyada ses yok ya da eksik. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin.\n" +
+                    "Tanı: " + plans.indices.joinToString(" · ") { si -> "${if (plans[si].role == "main") "ana" else "ses[${plans[si].lang}]"} ${plans[si].segments.size} parça, ${describe(streamFiles[si])}" }
             } catch (t: Throwable) {
                 out.delete(app)
                 if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
@@ -239,6 +240,32 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         }
         return out
     }
+
+    /** Tanı için: dosyanın biçimi ve içindeki izler ("TS, görüntü 1 ses 0" ya da ilk baytlar). */
+    private fun describe(f: File): String = try {
+        if (!f.exists()) "dosya yok" else {
+            val h = ByteArray(12)
+            val n = FileInputStream(f).use { it.read(h) }
+            val fmt = when {
+                n >= 1 && h[0] == 0x47.toByte() -> "TS"
+                n >= 3 && h[0] == 'I'.code.toByte() && h[1] == 'D'.code.toByte() && h[2] == '3'.code.toByte() -> "ID3+ses"
+                n >= 2 && h[0] == 0xFF.toByte() && (h[1].toInt() and 0xF0) == 0xF0 -> "ADTS"
+                n >= 8 && String(h, 4, 4, Charsets.ISO_8859_1) in setOf("ftyp", "styp", "moof", "sidx") -> "MP4"
+                else -> "bilinmiyor(" + h.take(n.coerceAtLeast(0).coerceAtMost(8)).joinToString("") { "%02X".format(it) } + ")"
+            }
+            val ex = android.media.MediaExtractor()
+            try {
+                ex.setDataSource(f.path)
+                var v = 0; var a = 0
+                val mimes = ArrayList<String>()
+                for (i in 0 until ex.trackCount) {
+                    val m = ex.getTrackFormat(i).getString(android.media.MediaFormat.KEY_MIME) ?: continue
+                    if (m.startsWith("video/")) v++ else if (m.startsWith("audio/")) { a++; mimes += m.removePrefix("audio/") }
+                }
+                "$fmt, görüntü $v ses $a${if (mimes.isNotEmpty()) " (" + mimes.joinToString() + ")" else ""}, ${f.length() / 1048576} MB"
+            } catch (t: Throwable) { "$fmt, okunamadı, ${f.length() / 1048576} MB" } finally { ex.release() }
+        }
+    } catch (t: Throwable) { "?" }
 
     /** Akış ID3v2 etiketiyle başlıyorsa etiketi atlar; değilse konumu değiştirmez. */
     private fun skipId3(ins: FileInputStream, len: Long) {

@@ -98,4 +98,16 @@ class ParserTest {
         assertEquals("tr", Lang.fromFileName("https://x/tr.vtt"))
         assertEquals("", Lang.fromFileName("https://x/abc-sd-1080.vtt"))
     }
+
+    @Test
+    fun stripsFakeImageHeaderFromRawAudio() {
+        val aac = java.io.File("src/androidTest/assets/fx/aac/a1.aac").readBytes()
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(1200) { (it * 7).toByte() }
+        val out = com.movietrack.app.download.Hls.stripJunk(png + aac)
+        org.junit.Assert.assertArrayEquals("sahte başlık atılıp ses (ID3) kalmalı", aac, out)
+        // Temiz ses olduğu gibi kalmalı (yanlışlıkla kesilmemeli)
+        org.junit.Assert.assertArrayEquals(aac, com.movietrack.app.download.Hls.stripJunk(aac))
+        val adts = aac.copyOfRange(10 + (((aac[6].toInt() and 0x7F) shl 21) or ((aac[7].toInt() and 0x7F) shl 14) or ((aac[8].toInt() and 0x7F) shl 7) or (aac[9].toInt() and 0x7F)), aac.size)
+        org.junit.Assert.assertArrayEquals(adts, com.movietrack.app.download.Hls.stripJunk(png + adts))
+    }
 }

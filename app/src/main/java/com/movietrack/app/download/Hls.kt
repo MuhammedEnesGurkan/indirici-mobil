@@ -25,7 +25,17 @@ object Hls {
     fun stripJunk(data: ByteArray): ByteArray {
         if (data.size < 188 * 3) return data
         fun ts(i: Int) = data[i] == 0x47.toByte() && data[i + 188] == 0x47.toByte() && data[i + 376] == 0x47.toByte()
-        if (ts(0)) return data
+        // Ham ses (paketli AAC/MP3): ID3 etiketi ya da art arda iki geçerli ADTS çerçevesi
+        fun id3(i: Int) = i + 10 <= data.size && data[i] == 'I'.code.toByte() && data[i + 1] == 'D'.code.toByte() && data[i + 2] == '3'.code.toByte() &&
+            data[i + 3].toInt() in 2..4 && (data[i + 6].toInt() and 0x80) == 0 && (data[i + 7].toInt() and 0x80) == 0
+        fun adts(i: Int): Boolean {
+            if (i + 7 > data.size || data[i] != 0xFF.toByte() || (data[i + 1].toInt() and 0xF6) != 0xF0) return false
+            val len = ((data[i + 3].toInt() and 0x03) shl 11) or ((data[i + 4].toInt() and 0xFF) shl 3) or ((data[i + 5].toInt() and 0xE0) shr 5)
+            if (len < 7) return false
+            val n = i + len
+            return n + 2 <= data.size && data[n] == 0xFF.toByte() && (data[n + 1].toInt() and 0xF6) == 0xF0
+        }
+        if (ts(0) || id3(0) || adts(0)) return data
         fun box(i: Int): Boolean {
             if (i + 8 > data.size) return false
             val t = String(data, i + 4, 4, Charsets.ISO_8859_1)
@@ -35,6 +45,7 @@ object Hls {
         val limit = minOf(data.size - 377, 256 * 1024)
         for (i in 1 until limit) {
             if (data[i] == 0x47.toByte() && ts(i)) return data.copyOfRange(i, data.size)
+            if ((id3(i) || adts(i))) return data.copyOfRange(i, data.size)
             if (box(i) && i >= 4) {
                 // kutu boyutu makul mü (4 bayt büyük endian)
                 val size = ((data[i].toLong() and 0xff) shl 24) or ((data[i + 1].toLong() and 0xff) shl 16) or ((data[i + 2].toLong() and 0xff) shl 8) or (data[i + 3].toLong() and 0xff)

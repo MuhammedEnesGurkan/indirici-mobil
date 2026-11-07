@@ -263,7 +263,7 @@ fun DownloadsScreen(snack: SnackbarHostState, onNew: (DownloadRequest) -> Unit, 
                 val click = {
                     when {
                         selecting -> if (sel) selected.remove(e.id) else selected.add(e.id)
-                        e.status == Status.DONE -> Open.open(ctx, e)
+                        e.status == Status.DONE && !hasWarning(e) -> Open.open(ctx, e)
                         else -> onOpenDetail(e.id)
                     }
                     Unit

@@ -67,6 +67,15 @@ class DownloadE2ETest {
                     val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(1200) { (it * 7).toByte() }
                     return ok(png + ts, "image/png", request)
                 }
+                // Ses parçaları da sahte PNG başlığıyla: ham AAC (ID3 etiketli) .png adıyla
+                if (path.startsWith("junkaud/")) {
+                    val n = path.removePrefix("junkaud/")
+                    if (n == "master.m3u8") return ok(String(asset("aac/master.m3u8")!!).replace("../split/", "/split/").toByteArray(), "application/vnd.apple.mpegurl", request)
+                    if (n == "audio.m3u8") return ok(String(asset("aac/audio.m3u8")!!).replace(".aac", ".png").toByteArray(), "application/vnd.apple.mpegurl", request)
+                    val a = asset("aac/" + n.replace(".png", ".aac")) ?: return MockResponse().setResponseCode(404)
+                    val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(1200) { (it * 7).toByte() }
+                    return ok(png + a, "image/png", request)
+                }
                 // gizlenmiş liste adı: master.txt
                 if (path == "hidden/master.txt") {
                     val t = String(asset("ts/master.m3u8")!!).replace("\nindex.m3u8", "\n/ts/index.m3u8").replace("../split/", "/split/")
@@ -200,6 +209,16 @@ class DownloadE2ETest {
         assertEquals(1, i.audios.size)
         val e = download(i, u, "aac")
         assertPlayable(e, "Ham AAC ses")
+    }
+
+    /** Ayrı ses izi ham AAC ve parçaları sahte resim gibi gizlenmiş (hdfilmcehennemi tarzı). */
+    @Test
+    fun disguisedPackedAudio() {
+        val u = url("junkaud/master.m3u8")
+        val i = analyze(u)
+        assertEquals(1, i.audios.size)
+        val e = download(i, u, "junkaud")
+        assertPlayable(e, "Gizlenmiş ham AAC ses")
     }
 
     /** Seçilen ayrı ses izi işe yaramıyorsa (içinde ses yok) videonun kendi sesi kullanılmalı. */

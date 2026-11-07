@@ -102,6 +102,9 @@ fun statusOf(e: DownloadEntity, p: LiveProgress?): StatusSpec = when (e.status) 
     else StatusSpec(Kind.ERROR, "Hata", Icons.Rounded.Error)
 }
 
+/** Tamamlandı ama uyarıyla (ör. ses yok): kartta gösterilir, dokununca ayrıntı açılır. */
+fun hasWarning(e: DownloadEntity) = e.status == Status.DONE && e.error?.startsWith("Uyarı") == true
+
 /** Sunucunun bağlantıyı reddetmesi (imzalı linkin süresi dolmuş olabilir). */
 fun isExpired(e: DownloadEntity): Boolean {
     val m = e.error ?: return false
@@ -146,7 +149,8 @@ fun metaLine(e: DownloadEntity, p: LiveProgress?): String {
     val total = p?.total ?: e.totalBytes
     val s = statusOf(e, p).kind
     return when (s) {
-        Kind.DONE -> listOf(Format.bytes(if (total > 0) total else bytes), Dates.short(e.finishedAt.takeIf { it > 0 } ?: e.createdAt)).joinToString(" · ")
+        Kind.DONE -> if (hasWarning(e)) "⚠ " + e.error!!.removePrefix("Uyarı: ").lineSequence().first().substringBefore(".")
+            else listOf(Format.bytes(if (total > 0) total else bytes), Dates.short(e.finishedAt.takeIf { it > 0 } ?: e.createdAt)).joinToString(" · ")
         Kind.ERROR, Kind.EXPIRED -> listOfNotNull(e.error?.lineSequence()?.firstOrNull()?.take(60), sizePart(bytes, total)).joinToString(" · ")
         Kind.MERGING -> when (p?.phase) {
             "Altyazılar indiriliyor" -> if ((p?.segTotal ?: 0) > 0) "Altyazılar indiriliyor · ${p?.segDone}/${p?.segTotal}" else "Altyazılar indiriliyor"
