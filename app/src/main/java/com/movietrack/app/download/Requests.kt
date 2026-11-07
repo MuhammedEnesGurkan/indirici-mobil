@@ -18,6 +18,7 @@ object Requests {
             return NewDownload(url = url, fileName = name, mime = i.mime, size = i.size, referer = referer, userAgent = userAgent, pageUrl = referer, title = pageTitle, labels = labels,
                 meta = mapOf("folder" to folder))
         }
+        val ua = i.userAgent ?: userAgent
         val meta = mutableMapOf(
             "variant" to (quality ?: url), "mode" to mode, "skipAds" to if (skipAds) "1" else "0", "base" to name, "folder" to folder,
             "audios" to i.audios.filter { it.id in audioIds }.joinToString("\n") { "${it.id}|${it.lang}|${it.name}" },
@@ -26,6 +27,6 @@ object Requests {
         )
         inline.forEach { (k, v) -> if (v.length < 300_000) meta["inline:$k"] = v }
         return NewDownload(url = url, fileName = "$name.mp4", type = i.kind, mime = "video/mp4", size = i.qualities.firstOrNull { it.id == quality }?.estSize ?: 0,
-            referer = referer, userAgent = userAgent, pageUrl = referer, title = pageTitle, meta = meta, labels = labels)
+            referer = referer ?: if (i.kind == "youtube") i.url else null, userAgent = ua, pageUrl = referer ?: i.url, title = pageTitle, meta = meta, labels = labels)
     }
 }

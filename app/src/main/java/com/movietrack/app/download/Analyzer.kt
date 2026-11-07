@@ -26,6 +26,8 @@ object Analyzer {
         val live: Boolean = false,
         val encrypted: Boolean = false,
         val muxedAudioLang: String = "",
+        /** Bu kaynağa özel istemci kimliği (YouTube adresleri yalnızca alındıkları istemciyle iner) */
+        val userAgent: String? = null,
     )
 
     @Volatile private var inlineTexts: Map<String, String> = emptyMap()
@@ -34,6 +36,7 @@ object Analyzer {
 
     suspend fun analyze(url: String, kind: String?, referer: String?, ua: String?, manifestText: String? = null, inline: Map<String, String> = emptyMap()): Info {
         inlineTexts = inline
+        if (kind == "youtube" || YouTube.id(url) != null) return YouTube.analyze(url)
         val k = kind ?: com.movietrack.app.browser.Detection.classify(url) ?: "direct"
         return when (k) {
             "hls" -> hls(url, referer, ua, manifestText ?: inline[url])

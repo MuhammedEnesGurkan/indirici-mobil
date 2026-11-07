@@ -291,6 +291,7 @@ private fun describe(i: Analyzer.Info): String = buildList {
     when (i.kind) {
         "hls" -> add("Video akışı")
         "dash" -> add("Video akışı (DASH)")
+        "youtube" -> add("YouTube videosu")
         else -> add(Category.of(i.fileName, i.mime).let { if (it == Category.OTHER) "Dosya" else it })
     }
     if (i.duration > 0) add(Format.duration(i.duration.toLong()))

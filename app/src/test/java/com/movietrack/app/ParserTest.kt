@@ -110,4 +110,16 @@ class ParserTest {
         val adts = aac.copyOfRange(10 + (((aac[6].toInt() and 0x7F) shl 21) or ((aac[7].toInt() and 0x7F) shl 14) or ((aac[8].toInt() and 0x7F) shl 7) or (aac[9].toInt() and 0x7F)), aac.size)
         org.junit.Assert.assertArrayEquals(adts, com.movietrack.app.download.Hls.stripJunk(png + adts))
     }
+
+    @Test
+    fun youtubeLinks() {
+        val y = com.movietrack.app.download.YouTube
+        assertEquals("jNQXAC9IVRw", y.id("https://www.youtube.com/watch?v=jNQXAC9IVRw&t=3"))
+        assertEquals("jNQXAC9IVRw", y.id("https://m.youtube.com/watch?feature=share&v=jNQXAC9IVRw"))
+        assertEquals("jNQXAC9IVRw", y.id("https://youtu.be/jNQXAC9IVRw?si=x"))
+        assertEquals("jNQXAC9IVRw", y.id("https://www.youtube.com/shorts/jNQXAC9IVRw"))
+        assertEquals(null, y.id("https://www.youtube.com/"))
+        assertEquals(null, y.id("https://example.com/watch?v=jNQXAC9IVRw"))
+        assertEquals(12345L, y.size("https://r1.googlevideo.com/videoplayback?itag=137&clen=12345&dur=19"))
+    }
 }

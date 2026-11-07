@@ -176,7 +176,9 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
     val longest = media.maxOfOrNull { it.duration } ?: 0.0
     val visible = media.filter { !it.isAd && !(it.duration in 0.1..59.0 && longest > 300) }
     val children = Detection.childToMaster(media)
-    val count = visible.count { it.url !in children }
+    // YouTube videoları parça parça (uzantısız) aktığı için algılanmaz; video sayfasında doğrudan YouTube'a sorulur
+    val ytPage = !isHome && com.movietrack.app.download.YouTube.id(url) != null
+    val count = if (ytPage) 1 else visible.count { it.url !in children }
 
     Column(Modifier.fillMaxSize().background(c.surface)) {
         Box(Modifier.weight(1f)) {
@@ -208,7 +210,10 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
                 )
             }
             AnimatedVisibility(!isHome && count > 0, enter = scaleIn(), exit = scaleOut()) {
-                MediaButton(count) { showMedia = true }
+                MediaButton(count) {
+                    if (ytPage) onDownload(DownloadRequest(url, "youtube", url, title.removeSuffix(" - YouTube"), userAgent = ua()))
+                    else showMedia = true
+                }
             }
             Box(Modifier.size(48.dp).clip(CircleShape).clickable { showTabs = true }, contentAlignment = Alignment.Center) {
                 Box(Modifier.size(24.dp).border(2.dp, c.onSurfaceVariant, RoundedCornerShape(7.dp)), contentAlignment = Alignment.Center) {

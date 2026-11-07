@@ -140,7 +140,7 @@ class DownloadManager(private val app: App) {
         val ctx = JobContext(e, dao, scope) { p -> _live.update { it + (e.id to p) } }
         try {
             when (e.type) {
-                "hls", "dash" -> StreamDownloader(app, ctx).run()
+                "hls", "dash", "youtube" -> StreamDownloader(app, ctx).run()
                 else -> DirectDownloader(app, ctx).run()
             }
             e.status = Status.DONE

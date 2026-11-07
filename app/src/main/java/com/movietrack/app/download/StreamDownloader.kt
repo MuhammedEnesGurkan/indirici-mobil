@@ -27,7 +27,8 @@ import kotlin.coroutines.coroutineContext
  *  - sonunda yeniden kodlamadan MP4'e birleştirilir (TS → MP4) ya da ayrı dosyalar olarak kaydedilir
  */
 class StreamDownloader(private val app: App, private val ctx: JobContext) {
-    private class Plan(val role: String, val lang: String, val name: String, val segments: List<Hls.Segment>, val fmp4: Boolean)
+    /** raw: bayt aralıklarıyla bölünmüş tek dosya (YouTube); parçalarda "sahte başlık" temizliği yapılmaz */
+    private class Plan(val role: String, val lang: String, val name: String, val segments: List<Hls.Segment>, val fmp4: Boolean, val raw: Boolean = false)
 
     private val e get() = ctx.e
     private val meta by lazy { KV.decode(e.meta) }
@@ -38,7 +39,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         ctx.phase = "Liste alınıyor"
         ctx.emit()
         val skipAds = meta["skipAds"] != "0"
-        val plans = if (e.type == "dash") planDash() else planHls()
+        val plans = when (e.type) { "dash" -> planDash(); "youtube" -> planYoutube(); else -> planHls() }
         val tasks = plans.flatMapIndexed { si, p -> p.segments.mapIndexedNotNull { i, s -> if (skipAds && s.isAd) null else Triple(si, i, s) } }
         ctx.segTotal = tasks.size
         ctx.segDone = tasks.count { segFile(it.first, it.second).exists() }
@@ -57,12 +58,12 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                         val f = segFile(si, i)
                         if (f.exists()) continue
                         var data = Http.bytes(e, seg.url, seg.range) { ctx.onBytes(it) }
-                        data = Hls.stripJunk(decrypt(seg, data))
+                        data = if (plans[si].raw) data else Hls.stripJunk(decrypt(seg, data))
                         val tmp = File(f.path + ".part")
                         tmp.writeBytes(data)
                         tmp.renameTo(f)
                         ctx.segDone++
-                        if (ctx.segDone > 2) e.totalBytes = e.downloadedBytes * ctx.segTotal / ctx.segDone
+                        if (ctx.segDone > 2 && e.type != "youtube") e.totalBytes = e.downloadedBytes * ctx.segTotal / ctx.segDone
                     }
                 }
             }
@@ -187,6 +188,29 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             val m = load(p[0])
             plans += Plan("audio", p.getOrElse(1) { "" }, p.getOrElse(2) { "" }, m.segments, m.segments.firstOrNull()?.map != null)
         }
+        return plans
+    }
+
+    /** YouTube: görüntü ve ses dosyaları 8 MB'lık aralıklarla paralel iner (YouTube tek parça hızını kısıyor). */
+    private suspend fun planYoutube(): List<Plan> {
+        fun ranges(url: String): List<Hls.Segment> {
+            val total = YouTube.size(url)
+            if (total <= 0) return listOf(Hls.Segment(url, 0.0, null, null, null, null, false, 0))
+            val chunk = 8L shl 20
+            return (0 until ((total + chunk - 1) / chunk).toInt()).map { i ->
+                val s = i * chunk
+                Hls.Segment(url, 0.0, longArrayOf(s, minOf(total, s + chunk) - 1), null, null, null, false, i.toLong())
+            }
+        }
+        val plans = ArrayList<Plan>()
+        val video = meta["variant"]?.takeIf { it.startsWith("http") } ?: error("YouTube görüntü adresi yok")
+        plans += Plan("main", "", "", ranges(video), fmp4 = true, raw = true)
+        for (line in (meta["audios"] ?: "").lines().filter { it.isNotBlank() }) {
+            val p = line.split('|')
+            plans += Plan("audio", p.getOrElse(1) { "" }, p.getOrElse(2) { "" }, ranges(p[0]), fmp4 = true, raw = true)
+        }
+        val total = plans.sumOf { p -> YouTube.size(p.segments.first().url) }
+        if (total > 0) e.totalBytes = total
         return plans
     }
 
