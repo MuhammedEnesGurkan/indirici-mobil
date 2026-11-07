@@ -108,22 +108,22 @@ class DownloadE2ETest {
 
     private fun url(p: String) = server.url("/$p").toString()
 
-    data class Probe(val video: Int, val audio: Int, val durationSec: Double, val audioLangs: List<String>)
+    data class Probe(val video: Int, val audio: Int, val durationSec: Double, val audioLangs: List<String>, val audioSec: Double = 0.0)
 
     private fun probe(uri: Uri): Probe {
         val ex = MediaExtractor()
         try {
             ex.setDataSource(app, uri, null)
-            var v = 0; var a = 0; var d = 0L
+            var v = 0; var a = 0; var d = 0L; var ad = 0L
             val langs = ArrayList<String>()
             for (i in 0 until ex.trackCount) {
                 val f = ex.getTrackFormat(i)
                 val mime = f.getString(MediaFormat.KEY_MIME) ?: ""
                 if (mime.startsWith("video/")) v++
-                if (mime.startsWith("audio/")) { a++; f.getString(MediaFormat.KEY_LANGUAGE)?.let { langs += it } }
+                if (mime.startsWith("audio/")) { a++; f.getString(MediaFormat.KEY_LANGUAGE)?.let { langs += it }; if (f.containsKey(MediaFormat.KEY_DURATION)) ad = maxOf(ad, f.getLong(MediaFormat.KEY_DURATION)) }
                 if (f.containsKey(MediaFormat.KEY_DURATION)) d = maxOf(d, f.getLong(MediaFormat.KEY_DURATION))
             }
-            return Probe(v, a, d / 1e6, langs)
+            return Probe(v, a, d / 1e6, langs, ad / 1e6)
         } finally { ex.release() }
     }
 
@@ -149,7 +149,11 @@ class DownloadE2ETest {
     private fun assertPlayable(e: DownloadEntity, what: String, wantAudio: Boolean = true) {
         val p = probe(output(e))
         assertEquals("$what: görüntü izi (uyarı: ${e.error})", 1, p.video)
-        if (wantAudio) assertTrue("$what: ses izi yok (${p}, uyarı: ${e.error})", p.audio >= 1)
+        if (wantAudio) {
+            assertTrue("$what: ses izi yok (${p}, uyarı: ${e.error})", p.audio >= 1)
+            // Ses tüm video boyunca sürmeli (yalnızca ilk parçası değil)
+            assertTrue("$what: ses ${p.audioSec}s / görüntü ${p.durationSec}s", p.audioSec >= p.durationSec * 0.8)
+        }
         assertTrue("$what: süre ${p.durationSec}s", p.durationSec in 5.0..7.5)
     }
 
@@ -186,6 +190,25 @@ class DownloadE2ETest {
         val e = download(i, u, "split")
         assertPlayable(e, "Ayrı ses izi")
         assertTrue("dil etiketi: ${probe(output(e)).audioLangs}", probe(output(e)).audioLangs.any { it == "tur" })
+    }
+
+    /** Ham .aac ses parçaları, her birinin başında ID3 zaman etiketi (Apple tarzı "packed audio"). */
+    @Test
+    fun packedAacAudioWithId3() {
+        val u = url("aac/master.m3u8")
+        val i = analyze(u)
+        assertEquals(1, i.audios.size)
+        val e = download(i, u, "aac")
+        assertPlayable(e, "Ham AAC ses")
+    }
+
+    /** Seçilen ayrı ses izi işe yaramıyorsa (içinde ses yok) videonun kendi sesi kullanılmalı. */
+    @Test
+    fun brokenSeparateAudioFallsBackToMuxed() {
+        val u = url("brokenaud/master.m3u8")
+        val i = analyze(u)
+        val e = download(i, u, "brokenaud")
+        assertPlayable(e, "Boş ayrı ses izi")
     }
 
     @Test

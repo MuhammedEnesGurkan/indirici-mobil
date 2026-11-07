@@ -15,17 +15,24 @@ import java.nio.ByteBuffer
 object Muxer {
     data class Input(val path: String, val takeVideo: Boolean, val takeAudio: Boolean, val lang: String = "")
 
+    /** @property skippedAudio girdilerde olup alınmayan ses izi sayısı; audioEndUs/videoEndUs son örnek zamanları */
+    data class Result(val audioTracks: Int, val skippedAudio: Int, val videoEndUs: Long, val audioEndUs: Long) {
+        /** Ses yok ya da görüntünün yarısından kısa: sessiz/eksik çıktı */
+        val audioMissing get() = audioTracks == 0 || (videoEndUs > 10_000_000 && audioEndUs < videoEndUs / 2)
+    }
+
     /**
      * @param durationHintUs kaynağın süresi (liste toplamı); TS dosyalarında kapsayıcı süre vermediği için ilerleme buna göre
      * @param active false dönerse birleştirme durdurulur (duraklat/iptal)
-     * @return eklenen ses izi sayısı
      */
-    fun mux(inputs: List<Input>, out: FileDescriptor, durationHintUs: Long = 0, active: () -> Boolean = { true }, onProgress: (Float) -> Unit = {}): Int {
+    fun mux(inputs: List<Input>, out: FileDescriptor, durationHintUs: Long = 0, active: () -> Boolean = { true }, onProgress: (Float) -> Unit = {}): Result {
         val muxer = MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>)
         val srcs = ArrayList<Src>()
         var hasVideo = false
         var durationUs = 0L
+        var skipped = 0
+        val videoDst = HashSet<Int>()
         try {
             for (inp in inputs) {
                 if (!active()) throw java.util.concurrent.CancellationException("Birleştirme durduruldu")
@@ -37,9 +44,10 @@ object Muxer {
                     val f = ex.getTrackFormat(i)
                     val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
                     if (f.containsKey(MediaFormat.KEY_DURATION)) durationUs = maxOf(durationUs, f.getLong(MediaFormat.KEY_DURATION))
+                    if (mime.startsWith("audio/") && !inp.takeAudio) skipped++
                     if (mime.startsWith("video/") && inp.takeVideo && !hasVideo) {
                         hasVideo = true
-                        map[i] = muxer.addTrack(f)
+                        map[i] = muxer.addTrack(f).also { videoDst += it }
                         ex.selectTrack(i)
                     } else if (mime.startsWith("audio/") && inp.takeAudio) {
                         if (inp.lang.isNotEmpty()) f.setString(MediaFormat.KEY_LANGUAGE, Lang.toIso3(inp.lang))
@@ -99,7 +107,9 @@ object Muxer {
                 ex.advance()
             }
             muxer.stop()
-            return srcs.sumOf { it.audio.size }
+            var vEnd = 0L; var aEnd = 0L
+            for (d in last.indices) if (last[d] != Long.MIN_VALUE) { if (d in videoDst) vEnd = maxOf(vEnd, last[d]) else aEnd = maxOf(aEnd, last[d]) }
+            return Result(srcs.sumOf { it.audio.size }, skipped, vEnd, aEnd)
         } finally {
             srcs.forEach { it.ex.release() }
             try { muxer.release() } catch (_: Exception) {}

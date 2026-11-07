@@ -95,20 +95,31 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 val totalUs = (plans.firstOrNull { it.role == "main" } ?: plans.first()).segments
                     .filter { !(skipAds && it.isAd) }.sumOf { it.duration } * 1_000_000
                 ctx.segTotal = 1000; ctx.segDone = 0
-                val audioTracks = out.openRw(app).use { pfd ->
-                    Muxer.mux(plans.indices.map { si ->
-                        val p = plans[si]
-                        // Ayrı ses izi seçildiyse ana akıştaki gömülü sesi yalnızca dil bilgisi yoksa al
-                        Muxer.Input(streamFiles[si].path, takeVideo = p.role == "main", takeAudio = p.role == "audio" || plans.none { it.role == "audio" } || meta["muxedAudio"] == "1", lang = p.lang)
-                    }, pfd.fileDescriptor, totalUs.toLong(), active = { job?.isActive != false }) { f ->
+                fun inputs(allAudio: Boolean) = plans.indices.map { si ->
+                    val p = plans[si]
+                    // Ayrı ses izi seçildiyse ana akıştaki gömülü ses alınmaz (aynı dilin iki kopyası olmasın)
+                    Muxer.Input(streamFiles[si].path, takeVideo = p.role == "main",
+                        takeAudio = allAudio || p.role == "audio" || plans.none { it.role == "audio" }, lang = p.lang)
+                }
+                fun runMux(allAudio: Boolean) = out.openRw(app).use { pfd ->
+                    Muxer.mux(inputs(allAudio), pfd.fileDescriptor, totalUs.toLong(), active = { job?.isActive != false }) { f ->
                         ctx.segDone = (f * 1000).toInt(); ctx.emit()
                     }
                 }
+                var r = runMux(false)
+                // Seçilen ayrı ses izi boş ya da eksik çıktıysa ana akışın kendi sesiyle yeniden birleştir
+                if (r.audioMissing && r.skippedAudio > 0) {
+                    ctx.phase = "Ses yeniden ekleniyor"; ctx.segDone = 0; ctx.emit()
+                    try { app.contentResolver.openFileDescriptor(out.uri, "rwt")?.close() } catch (_: Exception) {}
+                    r = runMux(true)
+                    ctx.phase = "Birleştiriliyor"
+                }
+                val audioTracks = if (r.audioMissing) 0 else r.audioTracks
                 out.publish(app)
                 e.outputUri = out.encode()
                 e.fileName = name
                 merged = true
-                if (audioTracks == 0) e.error = "Uyarı: dosyada ses izi yok. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin."
+                if (audioTracks == 0) e.error = "Uyarı: dosyada ses yok ya da eksik. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin."
             } catch (t: Throwable) {
                 out.delete(app)
                 if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
@@ -219,10 +230,27 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 if (skipAds && seg.isAd) continue
                 if (seg.map != null && seg.map != lastMap) { initFile(si, seg.map).let { if (it.exists()) os.write(it.readBytes()) }; lastMap = seg.map }
                 val f = segFile(si, i)
-                if (f.exists()) FileInputStream(f).use { it.copyTo(os, 1 shl 20) }
+                if (f.exists()) FileInputStream(f).use { ins ->
+                    // Ham ses parçaları (.aac/.mp3) başında ID3 etiketi taşır; ortadakiler okuyucuyu durdurur
+                    if (!p.fmp4) skipId3(ins, f.length())
+                    ins.copyTo(os, 1 shl 20)
+                }
             }
         }
         return out
+    }
+
+    /** Akış ID3v2 etiketiyle başlıyorsa etiketi atlar; değilse konumu değiştirmez. */
+    private fun skipId3(ins: FileInputStream, len: Long) {
+        if (len < 10) return
+        val ch = ins.channel
+        val h = ByteArray(10)
+        val n = ins.read(h)
+        if (n == 10 && h[0] == 'I'.code.toByte() && h[1] == 'D'.code.toByte() && h[2] == '3'.code.toByte()) {
+            val size = ((h[6].toInt() and 0x7F) shl 21) or ((h[7].toInt() and 0x7F) shl 14) or ((h[8].toInt() and 0x7F) shl 7) or (h[9].toInt() and 0x7F)
+            val footer = if ((h[5].toInt() and 0x10) != 0) 10 else 0
+            ch.position(minOf(len, 10L + size + footer))
+        } else ch.position(0)
     }
 
     private fun copyTo(f: File, out: OutputFile) {
