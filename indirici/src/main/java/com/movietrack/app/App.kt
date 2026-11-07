@@ -38,6 +38,8 @@ class App : Application() {
         settings = Settings(this)
         ui = UiPrefs(this)
         Notifications.createChannels(this)
+        // Telefonun çözemediği sesler (AC-3/E-AC-3/DTS/MP2) birleştirmede AAC'ye çevrilir
+        com.movietrack.app.download.Muxer.converterFactory = { androidx.media3.decoder.ffmpeg.FfmpegToAac.create(it) }
         downloads = DownloadManager(this)
         com.indirici.sys.Scheduler.install(this)
         downloads.restore()

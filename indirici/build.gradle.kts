@@ -22,7 +22,7 @@ android {
         versionName = "1.0.$run"
     }
     sourceSets["main"].apply {
-        java.srcDirs("$shared/download", "$shared/data", "$shared/browser", "$shared/util", "$shared/player")
+        java.srcDirs("$shared/download", "$shared/data", "$shared/browser", "$shared/util", "$shared/player", "../ffmpeg-audio/java")
         assets.srcDirs("../app/src/main/assets", "src/main/assets")
     }
     buildTypes {

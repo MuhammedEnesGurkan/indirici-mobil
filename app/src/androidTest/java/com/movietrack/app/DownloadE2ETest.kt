@@ -117,22 +117,23 @@ class DownloadE2ETest {
 
     private fun url(p: String) = server.url("/$p").toString()
 
-    data class Probe(val video: Int, val audio: Int, val durationSec: Double, val audioLangs: List<String>, val audioSec: Double = 0.0)
+    data class Probe(val video: Int, val audio: Int, val durationSec: Double, val audioLangs: List<String>, val audioSec: Double = 0.0, val audioMimes: List<String> = emptyList())
 
     private fun probe(uri: Uri): Probe {
         val ex = MediaExtractor()
         try {
             ex.setDataSource(app, uri, null)
             var v = 0; var a = 0; var d = 0L; var ad = 0L
+            val am = ArrayList<String>()
             val langs = ArrayList<String>()
             for (i in 0 until ex.trackCount) {
                 val f = ex.getTrackFormat(i)
                 val mime = f.getString(MediaFormat.KEY_MIME) ?: ""
                 if (mime.startsWith("video/")) v++
-                if (mime.startsWith("audio/")) { a++; f.getString(MediaFormat.KEY_LANGUAGE)?.let { langs += it }; if (f.containsKey(MediaFormat.KEY_DURATION)) ad = maxOf(ad, f.getLong(MediaFormat.KEY_DURATION)) }
+                if (mime.startsWith("audio/")) { am += mime; a++; f.getString(MediaFormat.KEY_LANGUAGE)?.let { langs += it }; if (f.containsKey(MediaFormat.KEY_DURATION)) ad = maxOf(ad, f.getLong(MediaFormat.KEY_DURATION)) }
                 if (f.containsKey(MediaFormat.KEY_DURATION)) d = maxOf(d, f.getLong(MediaFormat.KEY_DURATION))
             }
-            return Probe(v, a, d / 1e6, langs, ad / 1e6)
+            return Probe(v, a, d / 1e6, langs, ad / 1e6, am)
         } finally { ex.release() }
     }
 
@@ -199,6 +200,23 @@ class DownloadE2ETest {
         val e = download(i, u, "split")
         assertPlayable(e, "Ayrı ses izi")
         assertTrue("dil etiketi: ${probe(output(e)).audioLangs}", probe(output(e)).audioLangs.any { it == "tur" })
+    }
+
+    /** 5.1 AC-3 (Dolby) ses: telefon çözemiyorsa birleştirmede AAC stereoya çevrilmeli (indirici'deki FFmpeg çevirici). */
+    @Test
+    fun ac3AudioIsConvertedWhenPhoneCannotDecode() {
+        val prev = com.movietrack.app.download.Muxer.converterFactory
+        com.movietrack.app.download.Muxer.converterFactory = { androidx.media3.decoder.ffmpeg.FfmpegToAac.create(it) }
+        try {
+            val ac3 = android.media.MediaFormat.createAudioFormat("audio/ac3", 48000, 6)
+            val phoneHasAc3 = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).findDecoderForFormat(ac3) != null
+            val u = url("ac3/index.m3u8")
+            val e = download(analyze(u), u, "ac3")
+            val p = probe(output(e))
+            android.util.Log.i("AudioConvert", "telefonda AC-3 çözücü=$phoneHasAc3 çıktı sesi=${p.audioMimes} ses=${p.audioSec}s görüntü=${p.durationSec}s")
+            assertPlayable(e, "AC-3 ses")
+            if (!phoneHasAc3) assertEquals("çevrilmiş ses", listOf("audio/mp4a-latm"), p.audioMimes)
+        } finally { com.movietrack.app.download.Muxer.converterFactory = prev }
     }
 
     /** Ham .aac ses parçaları, her birinin başında ID3 zaman etiketi (Apple tarzı "packed audio"). */

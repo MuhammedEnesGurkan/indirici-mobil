@@ -37,6 +37,7 @@ android {
     }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
     testOptions { unitTests.isReturnDefaultValues = true }
+    sourceSets["androidTest"].java.srcDirs("../ffmpeg-audio/java")
 }
 
 dependencies {
@@ -69,4 +70,6 @@ dependencies {
     androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // Ses çevirme testi (AC-3 → AAC) için indirici'deki FFmpeg çeviricisi
+    androidTestImplementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
 }

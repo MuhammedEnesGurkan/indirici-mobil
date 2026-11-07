@@ -15,6 +15,22 @@ import java.nio.ByteBuffer
 object Muxer {
     data class Input(val path: String, val takeVideo: Boolean, val takeAudio: Boolean, val lang: String = "")
 
+    /** Telefonun çözemediği sesi (AC-3, E-AC-3, DTS, MP2…) her yerde çalan AAC'ye çevirir. */
+    interface AudioConverter {
+        /** Muxer'a eklenecek AAC biçimi (csd-0 dahil) */
+        val outputFormat: MediaFormat
+        fun feed(data: ByteBuffer, size: Int, ptsUs: Long, write: (ByteBuffer, MediaCodec.BufferInfo) -> Unit)
+        fun finish(write: (ByteBuffer, MediaCodec.BufferInfo) -> Unit)
+        fun release()
+    }
+
+    /** Uygulama sağlarsa (indirici: FFmpeg) çözülemeyen ses çevrilir; yoksa olduğu gibi kopyalanır. */
+    @Volatile var converterFactory: ((MediaFormat) -> AudioConverter?)? = null
+
+    private fun canDecode(f: MediaFormat): Boolean = try {
+        android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).findDecoderForFormat(f) != null
+    } catch (_: Exception) { true }
+
     /** @property skippedAudio girdilerde olup alınmayan ses izi sayısı; audioEndUs/videoEndUs son örnek zamanları */
     data class Result(val audioTracks: Int, val skippedAudio: Int, val videoEndUs: Long, val audioEndUs: Long) {
         /** Ses yok ya da görüntünün yarısından kısa: sessiz/eksik çıktı */
@@ -28,6 +44,7 @@ object Muxer {
     fun mux(inputs: List<Input>, out: FileDescriptor, durationHintUs: Long = 0, active: () -> Boolean = { true }, onProgress: (Float) -> Unit = {}): Result {
         val muxer = MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>)
+        val converters = HashMap<Int, AudioConverter>()
         val srcs = ArrayList<Src>()
         var hasVideo = false
         var durationUs = 0L
@@ -50,8 +67,10 @@ object Muxer {
                         map[i] = muxer.addTrack(f).also { videoDst += it }
                         ex.selectTrack(i)
                     } else if (mime.startsWith("audio/") && inp.takeAudio) {
-                        if (inp.lang.isNotEmpty()) f.setString(MediaFormat.KEY_LANGUAGE, Lang.toIso3(inp.lang))
-                        map[i] = muxer.addTrack(f)
+                        val conv = if (!canDecode(f)) try { converterFactory?.invoke(f) } catch (_: Throwable) { null } else null
+                        val tf = conv?.outputFormat ?: f
+                        if (inp.lang.isNotEmpty()) tf.setString(MediaFormat.KEY_LANGUAGE, Lang.toIso3(inp.lang))
+                        map[i] = muxer.addTrack(tf).also { d -> if (conv != null) converters[d] = conv }
                         audio += i
                         ex.selectTrack(i)
                     }
@@ -99,19 +118,26 @@ object Muxer {
                     if (track in s.audio && prev != Long.MIN_VALUE && t <= prev) t = prev + 1
                     if (t < 0) t = 0
                     val flags = if (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
-                    info.set(0, size, t, flags)
-                    muxer.writeSampleData(dst, buf, info)
+                    val conv = converters[dst]
+                    if (conv != null) {
+                        conv.feed(buf, size, t) { b, inf -> muxer.writeSampleData(dst, b, inf) }
+                    } else {
+                        info.set(0, size, t, flags)
+                        muxer.writeSampleData(dst, buf, info)
+                    }
                     last[dst] = if (prev == Long.MIN_VALUE) t else maxOf(prev, t)
                     if (durationUs > 0 && t - lastReport > 1_000_000) { lastReport = t; onProgress((t.toFloat() / durationUs).coerceIn(0f, 1f)) }
                 }
                 ex.advance()
             }
+            for ((d, c) in converters) c.finish { b, inf -> muxer.writeSampleData(d, b, inf) }
             muxer.stop()
             var vEnd = 0L; var aEnd = 0L
             for (d in last.indices) if (last[d] != Long.MIN_VALUE) { if (d in videoDst) vEnd = maxOf(vEnd, last[d]) else aEnd = maxOf(aEnd, last[d]) }
             return Result(srcs.sumOf { it.audio.size }, skipped, vEnd, aEnd)
         } finally {
             srcs.forEach { it.ex.release() }
+            converters.values.forEach { try { it.release() } catch (_: Throwable) {} }
             try { muxer.release() } catch (_: Exception) {}
         }
     }

@@ -102,10 +102,20 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                     Muxer.Input(streamFiles[si].path, takeVideo = p.role == "main",
                         takeAudio = allAudio || p.role == "audio" || plans.none { it.role == "audio" }, lang = p.lang)
                 }
-                fun runMux(allAudio: Boolean) = out.openRw(app).use { pfd ->
-                    Muxer.mux(inputs(allAudio), pfd.fileDescriptor, totalUs.toLong(), active = { job?.isActive != false }) { f ->
-                        ctx.segDone = (f * 1000).toInt(); ctx.emit()
+                // Birleştirme ayrı iş parçacığında: büyük dosyayı açmak (setDataSource) bölünemiyor; Duraklat/Sil
+                // basılınca indirme hemen durur, arka plandaki birleştirme ilk denetimde kendiliğinden biter
+                suspend fun runMux(allAudio: Boolean): Muxer.Result {
+                    val done = kotlinx.coroutines.CompletableDeferred<Muxer.Result>()
+                    kotlin.concurrent.thread(name = "birlestirme-${e.id}") {
+                        try {
+                            done.complete(out.openRw(app).use { pfd ->
+                                Muxer.mux(inputs(allAudio), pfd.fileDescriptor, totalUs.toLong(), active = { job?.isActive != false && !done.isCancelled }) { f ->
+                                    ctx.segDone = (f * 1000).toInt(); ctx.emit()
+                                }
+                            })
+                        } catch (t: Throwable) { done.completeExceptionally(t) }
                     }
+                    return done.await()
                 }
                 var r = runMux(false)
                 // Seçilen ayrı ses izi boş ya da eksik çıktıysa ana akışın kendi sesiyle yeniden birleştir
