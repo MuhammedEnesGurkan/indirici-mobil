@@ -4,7 +4,10 @@ import com.movietrack.app.App
 import com.movietrack.app.util.Category
 import com.movietrack.app.util.KV
 import com.movietrack.app.util.Lang
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import java.io.File
@@ -87,42 +90,20 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             val name = "$base.mp4"
             val out = OutputStore.create(app, name, "video/mp4", folder)
             try {
-                // MP4 önce uygulamanın kendi klasörüne yazılır: MediaMuxer çok sayıda küçük yazma ve geri
-                // dönüp yazma yapar; bunlar İndirilenler'e (MediaStore/FUSE) doğrudan gidince çok yavaşlıyordu.
-                // Bitince tek seferde, büyük bloklarla asıl yere kopyalanır.
-                val tmp = File(dir, "out.mp4")
+                // Emülatör ölçümü: doğrudan İndirilenler'e yazmak, önce uygulama klasörüne yazıp kopyalamaktan hızlı
                 val job = coroutineContext[kotlinx.coroutines.Job]
                 val totalUs = (plans.firstOrNull { it.role == "main" } ?: plans.first()).segments
                     .filter { !(skipAds && it.isAd) }.sumOf { it.duration } * 1_000_000
                 ctx.segTotal = 1000; ctx.segDone = 0
-                val audioTracks = FileOutputStream(tmp).use { fos ->
+                val audioTracks = out.openRw(app).use { pfd ->
                     Muxer.mux(plans.indices.map { si ->
                         val p = plans[si]
                         // Ayrı ses izi seçildiyse ana akıştaki gömülü sesi yalnızca dil bilgisi yoksa al
                         Muxer.Input(streamFiles[si].path, takeVideo = p.role == "main", takeAudio = p.role == "audio" || plans.none { it.role == "audio" } || meta["muxedAudio"] == "1", lang = p.lang)
-                    }, fos.fd, totalUs.toLong(), active = { job?.isActive != false }) { f ->
-                        ctx.segDone = (f * 900).toInt(); ctx.emit()
+                    }, pfd.fileDescriptor, totalUs.toLong(), active = { job?.isActive != false }) { f ->
+                        ctx.segDone = (f * 1000).toInt(); ctx.emit()
                     }
                 }
-                // Yer açmak için birleştirilmiş akış dosyalarını sil, sonra kopyala
-                streamFiles.forEach { it.delete() }
-                ctx.phase = "Kaydediliyor"; ctx.segDone = 900; ctx.emit()
-                val len = tmp.length().coerceAtLeast(1)
-                out.openRw(app).use { pfd ->
-                    FileOutputStream(pfd.fileDescriptor).use { os ->
-                        FileInputStream(tmp).use { ins ->
-                            val b = ByteArray(4 shl 20)
-                            var copied = 0L
-                            while (true) {
-                                val r = ins.read(b); if (r < 0) break
-                                os.write(b, 0, r); copied += r
-                                ctx.segDone = 900 + (copied * 100 / len).toInt(); ctx.emit()
-                                coroutineContext.ensureActive()
-                            }
-                        }
-                    }
-                }
-                tmp.delete()
                 out.publish(app)
                 e.outputUri = out.encode()
                 e.fileName = name
@@ -130,7 +111,6 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 if (audioTracks == 0) e.error = "Uyarı: dosyada ses izi yok. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin."
             } catch (t: Throwable) {
                 out.delete(app)
-                File(dir, "out.mp4").delete()
                 if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
                 e.error = "Uyarı: MP4'e birleştirilemedi (${t.message}); dosyalar ayrı kaydedildi."
             }
@@ -148,7 +128,9 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         }
 
         // 4) Altyazılar (SRT, oynatıcılar dosya adından otomatik tanır)
-        for (line in (meta["subs"] ?: "").lines().filter { it.isNotBlank() }) {
+        val subLines = (meta["subs"] ?: "").lines().filter { it.isNotBlank() }
+        if (subLines.isNotEmpty()) { ctx.phase = "Altyazılar indiriliyor"; ctx.segTotal = 0; ctx.segDone = 0; ctx.emit() }
+        for (line in subLines) {
             val (url, lang) = line.split('|').let { it[0] to it.getOrElse(1) { "" } }
             try {
                 val srt = fetchSubtitle(url)
@@ -252,7 +234,26 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         val cues = ArrayList<Subtitles.Cue>()
         if (text.trimStart().startsWith("#EXTM3U")) {
             val m = Hls.parseMedia(text, url)
-            val parts = m.segments.filter { !(meta["skipAds"] != "0" && it.isAd) }.map { Subtitles.parseVtt(Http.text(e, it.url)) }
+            // Parçalar sırayla değil 8'er 8'er paralel iner (uzun filmde 1000+ küçük dosya olabiliyor)
+            val segs = m.segments.filter { !(meta["skipAds"] != "0" && it.isAd) }
+            ctx.segTotal += segs.size; ctx.emit()
+            val gate = kotlinx.coroutines.sync.Semaphore(8)
+            val parts = kotlinx.coroutines.coroutineScope {
+                segs.map { seg ->
+                    async {
+                        gate.withPermit {
+                            // Tek parça inmezse altyazının tamamı kaybolmasın
+                            val r = try { Subtitles.parseVtt(Http.text(e, seg.url)) } catch (t: Throwable) {
+                                if (t is kotlinx.coroutines.CancellationException) throw t
+                                emptyList<Subtitles.Cue>() to null
+                            }
+                            synchronized(ctx) { ctx.segDone++ }
+                            ctx.emit()
+                            r
+                        }
+                    }
+                }.awaitAll()
+            }
             val base = parts.mapNotNull { it.second }.minOrNull()
             for ((c, ts) in parts) {
                 val off = if (ts != null && base != null) (ts - base) / 90000.0 else 0.0

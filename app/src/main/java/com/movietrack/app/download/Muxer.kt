@@ -28,6 +28,7 @@ object Muxer {
         var durationUs = 0L
         try {
             for (inp in inputs) {
+                if (!active()) throw java.util.concurrent.CancellationException("Birleştirme durduruldu")
                 val ex = MediaExtractor()
                 ex.setDataSource(inp.path)
                 val map = HashMap<Int, Int>()
@@ -72,7 +73,7 @@ object Muxer {
                 var best = Long.MAX_VALUE
                 for (c in srcs) if (has(c)) { val t = c.ex.sampleTime; if (s == null || t < best) { s = c; best = t } }
                 if (s == null) break
-                if ((++n and 1023) == 0 && !active()) throw java.util.concurrent.CancellationException("Birleştirme durduruldu")
+                if ((++n and 255) == 0 && !active()) throw java.util.concurrent.CancellationException("Birleştirme durduruldu")
                 val ex = s.ex
                 val size = ex.readSampleData(buf, 0)
                 if (size < 0) { ex.advance(); continue }

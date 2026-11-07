@@ -149,7 +149,7 @@ fun metaLine(e: DownloadEntity, p: LiveProgress?): String {
         Kind.DONE -> listOf(Format.bytes(if (total > 0) total else bytes), Dates.short(e.finishedAt.takeIf { it > 0 } ?: e.createdAt)).joinToString(" · ")
         Kind.ERROR, Kind.EXPIRED -> listOfNotNull(e.error?.lineSequence()?.firstOrNull()?.take(60), sizePart(bytes, total)).joinToString(" · ")
         Kind.MERGING -> when (p?.phase) {
-            "Kaydediliyor" -> "İndirilenler klasörüne kaydediliyor"
+            "Altyazılar indiriliyor" -> if ((p?.segTotal ?: 0) > 0) "Altyazılar indiriliyor · ${p?.segDone}/${p?.segTotal}" else "Altyazılar indiriliyor"
             else -> "Ses ve görüntü tek dosyada birleştiriliyor"
         }
         else -> listOfNotNull(
