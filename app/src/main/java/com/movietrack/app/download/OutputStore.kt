@@ -10,6 +10,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
 import com.movietrack.app.App
+import com.movietrack.app.R
 import java.io.File
 
 /**
@@ -58,7 +59,7 @@ object OutputStore {
                 return OutputFile(f.uri, false)
             }
         }
-        val rel = listOf(Environment.DIRECTORY_DOWNLOADS, "MovieTrack", subFolder).filter { it.isNotBlank() }.joinToString("/")
+        val rel = listOf(Environment.DIRECTORY_DOWNLOADS, ctx.getString(R.string.download_folder), subFolder).filter { it.isNotBlank() }.joinToString("/")
         if (Build.VERSION.SDK_INT >= 29) {
             val v = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, name)
@@ -70,7 +71,7 @@ object OutputStore {
             return OutputFile(uri, true)
         }
         @Suppress("DEPRECATION")
-        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), listOf("MovieTrack", subFolder).filter { it.isNotBlank() }.joinToString("/"))
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), listOf(ctx.getString(R.string.download_folder), subFolder).filter { it.isNotBlank() }.joinToString("/"))
         dir.mkdirs()
         var f = File(dir, name)
         var n = 1
@@ -109,5 +110,5 @@ object OutputStore {
 
     /** Kullanıcıya gösterilecek yol. */
     fun displayFolder(subFolder: String): String =
-        if (App.instance.settings.folderUri != null) "Seçilen klasör/$subFolder" else "İndirilenler/MovieTrack/$subFolder"
+        if (App.instance.settings.folderUri != null) "Seçilen klasör/$subFolder" else "İndirilenler/${App.instance.getString(R.string.download_folder)}/$subFolder"
 }
