@@ -49,7 +49,8 @@ object MiniPlayer {
 
     fun play(ctx: Context, e: DownloadEntity) {
         val uri = Open.contentUri(ctx, e.outputUri) ?: return
-        val p = player ?: ExoPlayer.Builder(ctx.applicationContext).build().also { pl ->
+        val p = player ?: ExoPlayer.Builder(ctx.applicationContext, androidx.media3.exoplayer.DefaultRenderersFactory(ctx.applicationContext)
+            .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)).build().also { pl ->
             player = pl
             pl.addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) { playing.value = isPlaying }

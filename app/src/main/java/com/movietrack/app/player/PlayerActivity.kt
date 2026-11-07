@@ -60,7 +60,10 @@ class PlayerActivity : ComponentActivity() {
         val uri = intent.data ?: run { finish(); return }
         resumeKey = uri.toString()
 
-        player = ExoPlayer.Builder(this).build()
+        // Telefonda yerleşik çözücüsü olmayan sesler (AC-3, E-AC-3, DTS, MP2…): uygulamada FFmpeg çözücü
+        // varsa onunla çalınır (indirici'de var; yoksa bu ayar etkisizdir)
+        player = ExoPlayer.Builder(this, androidx.media3.exoplayer.DefaultRenderersFactory(this)
+            .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)).build()
         view = PlayerView(this).apply {
             this.player = this@PlayerActivity.player
             setShowSubtitleButton(true)

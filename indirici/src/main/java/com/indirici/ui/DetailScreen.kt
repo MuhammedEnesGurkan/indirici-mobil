@@ -210,6 +210,11 @@ fun DetailScreen(id: Long, onBack: () -> Unit) {
                 InfoRow("Bağlantı", e.url, copy = { copyText(ctx, e.url) })
                 InfoRow("Kayıt yeri", OutputStore.displayFolder(KV.decode(e.meta)["folder"] ?: ""))
                 InfoRow("Başladı", Dates.short(e.createdAt))
+                if (e.status == Status.DONE) {
+                    var tracks by remember(e.id) { mutableStateOf<String?>(null) }
+                    LaunchedEffect(e.id) { tracks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { describeTracks(ctx, e) } }
+                    tracks?.let { InfoRow("İzler", it) }
+                }
                 if (e.labels.isNotBlank()) InfoRow("Seçimler", e.labels.replace("aud:", "ses ").replace("subtitle:", "altyazı "))
                 InfoRow("Devam ettirme", when {
                     e.type != "direct" -> "Parça parça sürer"
@@ -265,3 +270,21 @@ private fun SpeedChart(values: List<Long>) {
         }
     }
 }
+
+/** Dosyadaki görüntü/ses izleri ve bu telefonda yerleşik çözücüsü olup olmadığı. */
+private fun describeTracks(ctx: android.content.Context, e: com.movietrack.app.data.DownloadEntity): String = try {
+    val uri = Open.contentUri(ctx, e.outputUri) ?: error("dosya yok")
+    val ex = android.media.MediaExtractor()
+    try {
+        ex.setDataSource(ctx, uri, null)
+        val codecs = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+        (0 until ex.trackCount).mapNotNull { i ->
+            val f = ex.getTrackFormat(i)
+            val mime = f.getString(android.media.MediaFormat.KEY_MIME) ?: return@mapNotNull null
+            val kind = when { mime.startsWith("video/") -> "görüntü"; mime.startsWith("audio/") -> "ses"; else -> return@mapNotNull null }
+            val lang = f.getString(android.media.MediaFormat.KEY_LANGUAGE)?.takeIf { it != "und" }?.let { " $it" } ?: ""
+            val ok = try { codecs.findDecoderForFormat(f) != null } catch (_: Exception) { true }
+            "$kind ${mime.substringAfter('/')}$lang" + if (!ok) " (telefonda yerleşik çözücü yok; uygulamanın oynatıcısı çalar)" else ""
+        }.joinToString(" · ").ifEmpty { "iz bulunamadı" }
+    } finally { ex.release() }
+} catch (t: Throwable) { "okunamadı: ${t.message}" }
