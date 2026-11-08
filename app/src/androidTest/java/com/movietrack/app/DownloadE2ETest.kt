@@ -219,6 +219,16 @@ class DownloadE2ETest {
         } finally { com.movietrack.app.download.Muxer.converterFactory = prev }
     }
 
+    /** Ayrı ses izi başka bir saatle geliyor (görüntü 1,4 sn, ses 10 saat): ses videonun başına hizalanmalı. */
+    @Test
+    fun separateAudioOnDifferentClock() {
+        val u = url("clock/master.m3u8")
+        val i = analyze(u)
+        assertEquals(1, i.audios.size)
+        val e = download(i, u, "clock")
+        assertPlayable(e, "Başka saatli ses izi")
+    }
+
     /** Ham .aac ses parçaları, her birinin başında ID3 zaman etiketi (Apple tarzı "packed audio"). */
     @Test
     fun packedAacAudioWithId3() {

@@ -43,7 +43,7 @@ object Muxer {
      */
     fun mux(inputs: List<Input>, out: FileDescriptor, durationHintUs: Long = 0, active: () -> Boolean = { true }, onProgress: (Float) -> Unit = {}): Result {
         val muxer = MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>)
+        class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>, val video: Boolean) { var shift = 0L }
         val converters = HashMap<Int, AudioConverter>()
         val srcs = ArrayList<Src>()
         var hasVideo = false
@@ -75,7 +75,7 @@ object Muxer {
                         ex.selectTrack(i)
                     }
                 }
-                if (map.isEmpty()) ex.release() else srcs += Src(ex, map, audio)
+                if (map.isEmpty()) ex.release() else srcs += Src(ex, map, audio, map.keys.any { k -> ex.getTrackFormat(k).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true })
             }
             require(srcs.isNotEmpty()) { "Birleştirilecek iz bulunamadı" }
             if (durationHintUs > 0) durationUs = maxOf(durationUs, durationHintUs)
@@ -85,9 +85,15 @@ object Muxer {
             // Örnek kaldı mı: sampleTime değil iz numarasına bakılır (AAC ön dolgusu yüzünden ilk ses
             // örneğinin zamanı negatif olabilir; negatif zamanlı kaynak hiç okunmadan atlanıyordu)
             fun has(s: Src) = s.ex.sampleTrackIndex >= 0
-            var base = Long.MAX_VALUE
-            for (s in srcs) if (has(s)) base = minOf(base, s.ex.sampleTime)
-            if (base == Long.MAX_VALUE) base = 0L
+            // Saat tabanı: ayrı ses izi bazen başka bir saatle gelir (ör. görüntü 1 sn'de, ses 10 saatte başlar).
+            // Ana kaynağa 5 sn'den yakın başlayanlar ortak tabanı paylaşır (senkron korunur), uzak olan kendi
+            // başlangıcına hizalanır; yoksa ses saatlerce sonraya yazılıp video sessiz kalıyordu (eklentiyle aynı kural)
+            val firsts = srcs.associateWith { if (has(it)) it.ex.sampleTime else Long.MAX_VALUE }
+            val mainSrc = srcs.firstOrNull { it.video } ?: srcs.first()
+            val mainFirst = firsts[mainSrc]!!.takeIf { it != Long.MAX_VALUE } ?: firsts.values.minOrNull() ?: 0L
+            fun sameClock(f: Long) = f != Long.MAX_VALUE && kotlin.math.abs(f - mainFirst) < 5_000_000
+            val base = srcs.filter { sameClock(firsts[it]!!) }.minOfOrNull { firsts[it]!! } ?: mainFirst
+            for (s in srcs) s.shift = if (sameClock(firsts[s]!!) || firsts[s] == Long.MAX_VALUE) base else firsts[s]!!
             // Hedef iz başına son zaman ve kaydırma (dizi: HashMap kutulamasından kaçınılır)
             val nTracks = srcs.sumOf { it.map.size }
             val last = LongArray(nTracks) { Long.MIN_VALUE }
@@ -98,7 +104,7 @@ object Muxer {
                 // Zamanı en küçük örneği seç (izleri iç içe yaz); tek kaynakta doğrudan o
                 var s: Src? = null
                 var best = Long.MAX_VALUE
-                for (c in srcs) if (has(c)) { val t = c.ex.sampleTime; if (s == null || t < best) { s = c; best = t } }
+                for (c in srcs) if (has(c)) { val t = c.ex.sampleTime - c.shift; if (s == null || t < best) { s = c; best = t } }
                 if (s == null) break
                 if ((++n and 255) == 0 && !active()) throw java.util.concurrent.CancellationException("Birleştirme durduruldu")
                 val ex = s.ex
@@ -107,7 +113,7 @@ object Muxer {
                 val track = ex.sampleTrackIndex
                 val dst = s.map[track]
                 if (dst != null) {
-                    var t = ex.sampleTime - base + offset[dst]
+                    var t = ex.sampleTime - s.shift + offset[dst]
                     val prev = last[dst]
                     // Kesintide zaman sıfırlanırsa (reklam/periyot) kaydır
                     if (prev != Long.MIN_VALUE && t < prev - 1_000_000) {
