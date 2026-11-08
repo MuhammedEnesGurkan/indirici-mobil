@@ -19,6 +19,9 @@ import java.io.FileOutputStream
  */
 @RunWith(AndroidJUnit4::class)
 class MergeSpeedTest {
+    // Takılan test tüm işi kilitlemesin: süresi dolan test adıyla başarısız olur
+    @get:org.junit.Rule val timeoutRule: org.junit.rules.Timeout = org.junit.rules.Timeout.seconds(420)
+
     private val app get() = App.instance
     private val assets get() = InstrumentationRegistry.getInstrumentation().context.assets
 

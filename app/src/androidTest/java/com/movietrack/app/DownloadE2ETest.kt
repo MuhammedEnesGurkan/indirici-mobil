@@ -38,6 +38,9 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class DownloadE2ETest {
+    // Takılan test tüm işi kilitlemesin: süresi dolan test adıyla başarısız olur
+    @get:org.junit.Rule val timeoutRule: org.junit.rules.Timeout = org.junit.rules.Timeout.seconds(240)
+
     @get:Rule
     val perms: GrantPermissionRule = if (Build.VERSION.SDK_INT >= 33) GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS) else GrantPermissionRule.grant()
 

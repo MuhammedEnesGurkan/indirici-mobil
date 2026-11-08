@@ -74,7 +74,8 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             repeat(workers) { w ->
                 launch {
                     while (true) {
-                        while (w >= allowed.get()) kotlinx.coroutines.delay(500)
+                        // Yavaşlatılmış bağlantı bekler; iş bitince beklemeyi bırakır (yoksa indirme sonda takılıyordu)
+                        while (w >= allowed.get() && next.get() < tasks.size) kotlinx.coroutines.delay(500)
                         val k = next.getAndIncrement()
                         if (k >= tasks.size) break
                         val (si, i, seg) = tasks[k]
