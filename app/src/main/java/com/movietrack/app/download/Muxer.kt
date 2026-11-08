@@ -25,6 +25,8 @@ object Muxer {
     }
 
     /** Uygulama sağlarsa (indirici: FFmpeg) çözülemeyen ses çevrilir; yoksa olduğu gibi kopyalanır. */
+    private val ADTS_RATES = intArrayOf(96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350)
+
     @Volatile var converterFactory: ((MediaFormat) -> AudioConverter?)? = null
 
     private fun canDecode(f: MediaFormat): Boolean = try {
@@ -47,6 +49,7 @@ object Muxer {
         val converters = HashMap<Int, AudioConverter>()
         val aacTracks = HashSet<Int>() // kaynak iz numarası (girdi başına ayrı Src olduğundan çakışma önemsiz)
         var adtsStripped = 0L
+        var adtsMulti = 0L
         val notes = ArrayList<String>()
         val srcs = ArrayList<Src>()
         var hasVideo = false
@@ -134,19 +137,33 @@ object Muxer {
                     val conv = converters[dst]
                     if (conv != null) {
                         conv.feed(buf, size, t) { b, inf -> muxer.writeSampleData(dst, b, inf) }
+                        last[dst] = if (prev == Long.MIN_VALUE) t else maxOf(prev, t)
                     } else {
-                        // AAC örneği ADTS başlığıyla geldiyse (0xFFF senkronu) başlığı at: MP4'te ham AAC çerçevesi
-                        // olmalı. Başlıklı çerçeveyi telefonun AAC çözücüsü sessiz çalıyordu (FFmpeg/MX ise atlıyordu).
-                        var off = 0
+                        // AAC örneği ADTS başlığıyla geldiyse (0xFFF senkronu): MP4'te başlıksız, tek tek ham çerçeve olmalı.
+                        // TS okuyucusu bir örnekte birden çok ADTS çerçevesi verebiliyor; hepsi ayrılıp her biri kendi
+                        // zamanıyla yazılır (yalnız ilk başlığı atmak sesi "cıvıltılı" yapıyordu).
                         if (track in s.audio && track in aacTracks && size > 9 && buf.get(0) == 0xFF.toByte() && (buf.get(1).toInt() and 0xF6) == 0xF0) {
-                            val hdr = if ((buf.get(1).toInt() and 0x01) == 1) 7 else 9
-                            val len = ((buf.get(3).toInt() and 0x03) shl 11) or ((buf.get(4).toInt() and 0xFF) shl 3) or ((buf.get(5).toInt() and 0xE0) ushr 5)
-                            if (len in (hdr + 1)..size) { off = hdr; adtsStripped++ }
+                            var pos = 0; var k = 0
+                            while (pos + 7 <= size && buf.get(pos) == 0xFF.toByte() && (buf.get(pos + 1).toInt() and 0xF6) == 0xF0) {
+                                val hdr = if ((buf.get(pos + 1).toInt() and 0x01) == 1) 7 else 9
+                                val len = ((buf.get(pos + 3).toInt() and 0x03) shl 11) or ((buf.get(pos + 4).toInt() and 0xFF) shl 3) or ((buf.get(pos + 5).toInt() and 0xE0) ushr 5)
+                                if (len <= hdr || pos + len > size) break
+                                val rate = ADTS_RATES.getOrElse((buf.get(pos + 2).toInt() ushr 2) and 0x0F) { 48000 }
+                                var ft = t + k * 1024L * 1_000_000L / rate
+                                if (ft <= (last[dst].takeIf { it != Long.MIN_VALUE } ?: -1L)) ft = last[dst] + 1
+                                info.set(pos + hdr, len - hdr, ft, MediaCodec.BUFFER_FLAG_KEY_FRAME)
+                                muxer.writeSampleData(dst, buf, info)
+                                last[dst] = ft
+                                adtsStripped++; k++; pos += len
+                            }
+                            if (k == 0) { info.set(0, size, t, flags); muxer.writeSampleData(dst, buf, info); last[dst] = if (prev == Long.MIN_VALUE) t else maxOf(prev, t) }
+                            else if (k > 1) adtsMulti++
+                        } else {
+                            info.set(0, size, t, flags)
+                            muxer.writeSampleData(dst, buf, info)
+                            last[dst] = if (prev == Long.MIN_VALUE) t else maxOf(prev, t)
                         }
-                        info.set(off, size - off, t, flags)
-                        muxer.writeSampleData(dst, buf, info)
                     }
-                    last[dst] = if (prev == Long.MIN_VALUE) t else maxOf(prev, t)
                     if (durationUs > 0 && t - lastReport > 1_000_000) { lastReport = t; onProgress((t.toFloat() / durationUs).coerceIn(0f, 1f)) }
                 }
                 ex.advance()
@@ -155,7 +172,7 @@ object Muxer {
             muxer.stop()
             var vEnd = 0L; var aEnd = 0L
             for (d in last.indices) if (last[d] != Long.MIN_VALUE) { if (d in videoDst) vEnd = maxOf(vEnd, last[d]) else aEnd = maxOf(aEnd, last[d]) }
-            if (adtsStripped > 0) notes += "AAC çerçevelerinden ADTS başlığı atıldı: $adtsStripped"
+            if (adtsStripped > 0) notes += "AAC: $adtsStripped çerçeveden ADTS başlığı atıldı ($adtsMulti örnekte birden çok çerçeve vardı)"
             notes += "yazılan: görüntü sonu ${"%.1f".format(java.util.Locale.US, vEnd / 1e6)} sn, ses sonu ${"%.1f".format(java.util.Locale.US, aEnd / 1e6)} sn"
             return Result(srcs.sumOf { it.audio.size }, skipped, vEnd, aEnd, notes.joinToString("\n"))
         } finally {

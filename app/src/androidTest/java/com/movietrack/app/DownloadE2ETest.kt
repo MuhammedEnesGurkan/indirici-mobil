@@ -175,7 +175,12 @@ class DownloadE2ETest {
             // Ses tüm video boyunca sürmeli (yalnızca ilk parçası değil)
             assertTrue("$what: ses ${p.audioSec}s / görüntü ${p.durationSec}s", p.audioSec >= p.durationSec * 0.8)
             // Tanı raporu sesin gerçekten duyulduğunu ölçmeli (test dosyalarında 440 Hz ton var)
-            com.movietrack.app.util.KV.decode(e.meta)["diag"]?.let { d -> assertTrue("$what: tanı sesi duymadı: ${d.replace("\n", " | ")}", d.contains("ses VAR")) }
+            com.movietrack.app.util.KV.decode(e.meta)["diag"]?.let { d ->
+                assertTrue("$what: tanı sesi duymadı: ${d.replace("\n", " | ")}", d.contains("ses VAR"))
+                // Test seslerinin hepsi 440 Hz temiz ton: bozuk/karışık ses başka frekans verir
+                val hz = Regex("baskın frekans ~(\\d+) Hz").find(d)?.groupValues?.get(1)?.toIntOrNull() ?: -1
+                assertTrue("$what: ses bozuk, frekans ~$hz Hz (440 bekleniyor): ${d.replace("\n", " | ")}", hz in 400..480)
+            }
         }
         assertTrue("$what: süre ${p.durationSec}s", p.durationSec in 5.0..7.5)
     }

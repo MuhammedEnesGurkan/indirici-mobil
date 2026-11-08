@@ -55,6 +55,10 @@ object Diag {
             codec = MediaCodec.createByCodecName(name).apply { configure(f, null, null, 0); start() }
             val info = MediaCodec.BufferInfo()
             var inDone = false; var samples = 0L; var sumSq = 0.0; var peak = 0; var firstPts = -1L; var inCount = 0
+            // Baskın frekans (sıfır geçişi, 1. kanal): bozuk/karışık ses temiz bir tonda yanlış frekans verir
+            var ch = if (f.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) f.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 2
+            var rate = if (f.containsKey(MediaFormat.KEY_SAMPLE_RATE)) f.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 48000
+            var crossings = 0L; var frames0 = 0L; var prevPos = false
             val deadline = System.currentTimeMillis() + 8000
             while (System.currentTimeMillis() < deadline && samples < 48000L * 2 * 20) {
                 if (!inDone) {
@@ -66,11 +70,22 @@ object Diag {
                     }
                 }
                 val oi = codec.dequeueOutputBuffer(info, 5000)
+                if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    codec.outputFormat.let { of -> ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT); rate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE) }
+                }
                 if (oi >= 0) {
                     val ob = codec.getOutputBuffer(oi)!!.order(ByteOrder.nativeOrder())
                     ob.position(info.offset); ob.limit(info.offset + info.size)
                     val sb = ob.asShortBuffer()
-                    while (sb.hasRemaining()) { val v = sb.get().toInt(); sumSq += v.toDouble() * v; if (kotlin.math.abs(v) > peak) peak = kotlin.math.abs(v); samples++ }
+                    var idx = 0
+                    while (sb.hasRemaining()) {
+                        val v = sb.get().toInt(); sumSq += v.toDouble() * v; if (kotlin.math.abs(v) > peak) peak = kotlin.math.abs(v); samples++
+                        if (idx % ch == 0) {
+                            frames0++
+                            if (v > 200 && !prevPos) { prevPos = true; crossings++ } else if (v < -200 && prevPos) prevPos = false
+                        }
+                        idx++
+                    }
                     codec.releaseOutputBuffer(oi, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
                 }
@@ -79,7 +94,8 @@ object Diag {
             if (samples == 0L) return "ses çözülemedi ($inCount örnek verildi, çıktı yok)"
             val rms = sqrt(sumSq / samples)
             val db = if (rms < 1) "-∞" else "%.0f".format(20 * log10(rms / 32768))
-            "ilk ${sec(firstPts.coerceAtLeast(0))}'den itibaren ${samples / 2 / 48} ms kadar çözüldü, seviye $db dBFS, tepe $peak" +
+            val hz = if (frames0 > 0) (crossings * rate / frames0) else 0
+            "ilk ${sec(firstPts.coerceAtLeast(0))}'den itibaren ${frames0 * 1000 / rate.coerceAtLeast(1)} ms çözüldü ($ch kanal, $rate Hz), seviye $db dBFS, tepe $peak, baskın frekans ~$hz Hz" +
                 if (peak < 30) " → SESSİZ (veri sıfır)" else " → ses VAR"
         } catch (t: Throwable) { "ölçülemedi: ${t.message}" } finally {
             try { codec?.stop() } catch (_: Throwable) {}
