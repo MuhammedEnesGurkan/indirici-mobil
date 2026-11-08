@@ -45,6 +45,8 @@ object Muxer {
         val muxer = MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>, val video: Boolean) { var shift = 0L }
         val converters = HashMap<Int, AudioConverter>()
+        val aacTracks = HashSet<Int>() // kaynak iz numarası (girdi başına ayrı Src olduğundan çakışma önemsiz)
+        var adtsStripped = 0L
         val notes = ArrayList<String>()
         val srcs = ArrayList<Src>()
         var hasVideo = false
@@ -70,6 +72,8 @@ object Muxer {
                     } else if (mime.startsWith("audio/") && inp.takeAudio) {
                         val conv = if (!canDecode(f)) try { converterFactory?.invoke(f) } catch (_: Throwable) { null } else null
                         val tf = conv?.outputFormat ?: f
+                        // TS'den gelen AAC bazen ADTS başlıklı verilir ("is-adts"); MP4'te başlık olmamalı
+                        if (conv == null && mime == MediaFormat.MIMETYPE_AUDIO_AAC) { tf.setInteger("is-adts", 0); aacTracks += i }
                         if (inp.lang.isNotEmpty()) tf.setString(MediaFormat.KEY_LANGUAGE, Lang.toIso3(inp.lang))
                         map[i] = muxer.addTrack(tf).also { d -> if (conv != null) converters[d] = conv }
                         notes += "girdi$k $mime: " + if (conv != null) "AAC'ye çevriliyor" else if (!canDecode(f)) "olduğu gibi (telefon çözemiyor, çevirici yok)" else "olduğu gibi"
@@ -131,7 +135,15 @@ object Muxer {
                     if (conv != null) {
                         conv.feed(buf, size, t) { b, inf -> muxer.writeSampleData(dst, b, inf) }
                     } else {
-                        info.set(0, size, t, flags)
+                        // AAC örneği ADTS başlığıyla geldiyse (0xFFF senkronu) başlığı at: MP4'te ham AAC çerçevesi
+                        // olmalı. Başlıklı çerçeveyi telefonun AAC çözücüsü sessiz çalıyordu (FFmpeg/MX ise atlıyordu).
+                        var off = 0
+                        if (track in s.audio && track in aacTracks && size > 9 && buf.get(0) == 0xFF.toByte() && (buf.get(1).toInt() and 0xF6) == 0xF0) {
+                            val hdr = if ((buf.get(1).toInt() and 0x01) == 1) 7 else 9
+                            val len = ((buf.get(3).toInt() and 0x03) shl 11) or ((buf.get(4).toInt() and 0xFF) shl 3) or ((buf.get(5).toInt() and 0xE0) ushr 5)
+                            if (len in (hdr + 1)..size) { off = hdr; adtsStripped++ }
+                        }
+                        info.set(off, size - off, t, flags)
                         muxer.writeSampleData(dst, buf, info)
                     }
                     last[dst] = if (prev == Long.MIN_VALUE) t else maxOf(prev, t)
@@ -143,6 +155,7 @@ object Muxer {
             muxer.stop()
             var vEnd = 0L; var aEnd = 0L
             for (d in last.indices) if (last[d] != Long.MIN_VALUE) { if (d in videoDst) vEnd = maxOf(vEnd, last[d]) else aEnd = maxOf(aEnd, last[d]) }
+            if (adtsStripped > 0) notes += "AAC çerçevelerinden ADTS başlığı atıldı: $adtsStripped"
             notes += "yazılan: görüntü sonu ${"%.1f".format(java.util.Locale.US, vEnd / 1e6)} sn, ses sonu ${"%.1f".format(java.util.Locale.US, aEnd / 1e6)} sn"
             return Result(srcs.sumOf { it.audio.size }, skipped, vEnd, aEnd, notes.joinToString("\n"))
         } finally {
