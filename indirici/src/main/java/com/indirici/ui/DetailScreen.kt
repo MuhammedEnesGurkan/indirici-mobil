@@ -210,6 +210,15 @@ fun DetailScreen(id: Long, onBack: () -> Unit) {
                 InfoRow("Bağlantı", e.url, copy = { copyText(ctx, e.url) })
                 InfoRow("Kayıt yeri", OutputStore.displayFolder(KV.decode(e.meta)["folder"] ?: ""))
                 InfoRow("Başladı", Dates.short(e.createdAt))
+                KV.decode(e.meta)["diag"]?.let { diag ->
+                    Row(Modifier.fillMaxWidth().background(c.surfaceContainerLow).padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Tanı raporu", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        TextButton(onClick = {
+                            copyText(ctx, "indirici ${com.movietrack.app.BuildConfig.VERSION_NAME} · Android ${android.os.Build.VERSION.RELEASE} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n" +
+                                "${e.fileName}\nsayfa: ${e.pageUrl ?: "-"}\nseçimler: ${e.labels}\n$diag")
+                        }) { Text("Kopyala") }
+                    }
+                }
                 if (e.status == Status.DONE) {
                     var tracks by remember(e.id) { mutableStateOf<String?>(null) }
                     LaunchedEffect(e.id) { tracks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { describeTracks(ctx, e) } }

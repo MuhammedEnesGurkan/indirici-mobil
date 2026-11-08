@@ -32,7 +32,7 @@ object Muxer {
     } catch (_: Exception) { true }
 
     /** @property skippedAudio girdilerde olup alınmayan ses izi sayısı; audioEndUs/videoEndUs son örnek zamanları */
-    data class Result(val audioTracks: Int, val skippedAudio: Int, val videoEndUs: Long, val audioEndUs: Long) {
+    data class Result(val audioTracks: Int, val skippedAudio: Int, val videoEndUs: Long, val audioEndUs: Long, val notes: String = "") {
         /** Ses yok ya da görüntünün yarısından kısa: sessiz/eksik çıktı */
         val audioMissing get() = audioTracks == 0 || (videoEndUs > 10_000_000 && audioEndUs < videoEndUs / 2)
     }
@@ -45,13 +45,14 @@ object Muxer {
         val muxer = MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>, val video: Boolean) { var shift = 0L }
         val converters = HashMap<Int, AudioConverter>()
+        val notes = ArrayList<String>()
         val srcs = ArrayList<Src>()
         var hasVideo = false
         var durationUs = 0L
         var skipped = 0
         val videoDst = HashSet<Int>()
         try {
-            for (inp in inputs) {
+            for ((k, inp) in inputs.withIndex()) {
                 if (!active()) throw java.util.concurrent.CancellationException("Birleştirme durduruldu")
                 val ex = MediaExtractor()
                 ex.setDataSource(inp.path)
@@ -61,7 +62,7 @@ object Muxer {
                     val f = ex.getTrackFormat(i)
                     val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
                     if (f.containsKey(MediaFormat.KEY_DURATION)) durationUs = maxOf(durationUs, f.getLong(MediaFormat.KEY_DURATION))
-                    if (mime.startsWith("audio/") && !inp.takeAudio) skipped++
+                    if (mime.startsWith("audio/") && !inp.takeAudio) { skipped++; notes += "girdi$k $mime: alınmadı" }
                     if (mime.startsWith("video/") && inp.takeVideo && !hasVideo) {
                         hasVideo = true
                         map[i] = muxer.addTrack(f).also { videoDst += it }
@@ -71,6 +72,7 @@ object Muxer {
                         val tf = conv?.outputFormat ?: f
                         if (inp.lang.isNotEmpty()) tf.setString(MediaFormat.KEY_LANGUAGE, Lang.toIso3(inp.lang))
                         map[i] = muxer.addTrack(tf).also { d -> if (conv != null) converters[d] = conv }
+                        notes += "girdi$k $mime: " + if (conv != null) "AAC'ye çevriliyor" else if (!canDecode(f)) "olduğu gibi (telefon çözemiyor, çevirici yok)" else "olduğu gibi"
                         audio += i
                         ex.selectTrack(i)
                     }
@@ -94,6 +96,7 @@ object Muxer {
             fun sameClock(f: Long) = f != Long.MAX_VALUE && kotlin.math.abs(f - mainFirst) < 5_000_000
             val base = srcs.filter { sameClock(firsts[it]!!) }.minOfOrNull { firsts[it]!! } ?: mainFirst
             for (s in srcs) s.shift = if (sameClock(firsts[s]!!) || firsts[s] == Long.MAX_VALUE) base else firsts[s]!!
+            srcs.forEachIndexed { k, s -> notes += "kaynak$k ilk ${"%.2f".format(java.util.Locale.US, (firsts[s]!!.takeIf { it != Long.MAX_VALUE } ?: 0L) / 1e6)} sn, hizalama ${"%.2f".format(java.util.Locale.US, s.shift / 1e6)} sn${if (s.video) " (görüntü)" else ""}" }
             // Hedef iz başına son zaman ve kaydırma (dizi: HashMap kutulamasından kaçınılır)
             val nTracks = srcs.sumOf { it.map.size }
             val last = LongArray(nTracks) { Long.MIN_VALUE }
@@ -140,7 +143,8 @@ object Muxer {
             muxer.stop()
             var vEnd = 0L; var aEnd = 0L
             for (d in last.indices) if (last[d] != Long.MIN_VALUE) { if (d in videoDst) vEnd = maxOf(vEnd, last[d]) else aEnd = maxOf(aEnd, last[d]) }
-            return Result(srcs.sumOf { it.audio.size }, skipped, vEnd, aEnd)
+            notes += "yazılan: görüntü sonu ${"%.1f".format(java.util.Locale.US, vEnd / 1e6)} sn, ses sonu ${"%.1f".format(java.util.Locale.US, aEnd / 1e6)} sn"
+            return Result(srcs.sumOf { it.audio.size }, skipped, vEnd, aEnd, notes.joinToString("\n"))
         } finally {
             srcs.forEach { it.ex.release() }
             converters.values.forEach { try { it.release() } catch (_: Throwable) {} }

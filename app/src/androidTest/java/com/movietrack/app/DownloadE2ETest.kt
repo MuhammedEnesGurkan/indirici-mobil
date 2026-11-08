@@ -164,6 +164,8 @@ class DownloadE2ETest {
             assertTrue("$what: ses izi yok (${p}, uyarı: ${e.error})", p.audio >= 1)
             // Ses tüm video boyunca sürmeli (yalnızca ilk parçası değil)
             assertTrue("$what: ses ${p.audioSec}s / görüntü ${p.durationSec}s", p.audioSec >= p.durationSec * 0.8)
+            // Tanı raporu sesin gerçekten duyulduğunu ölçmeli (test dosyalarında 440 Hz ton var)
+            com.movietrack.app.util.KV.decode(e.meta)["diag"]?.let { d -> assertTrue("$what: tanı sesi duymadı:\n$d", d.contains("ses VAR")) }
         }
         assertTrue("$what: süre ${p.durationSec}s", p.durationSec in 5.0..7.5)
     }

@@ -2,6 +2,7 @@ package com.movietrack.app.download
 
 import com.movietrack.app.App
 import com.movietrack.app.util.Category
+import com.movietrack.app.util.Format
 import com.movietrack.app.util.KV
 import com.movietrack.app.util.Lang
 import kotlinx.coroutines.async
@@ -118,6 +119,13 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         fun diag() = "Tanı: " + plans.indices.joinToString(" · ") { si -> "${if (plans[si].role == "main") "ana" else "ses[${plans[si].lang}]"} ${plans[si].segments.size} parça, ${describe(streamFiles[si])}" }
         val audioLang = plans.firstOrNull { it.role == "audio" }?.lang ?: meta["muxedLang"] ?: ""
         var usedAllAudio = false
+        val report = StringBuilder()
+        report.append("Tür: ${e.type} · ${plans.size} akış\n")
+        plans.forEachIndexed { si, p ->
+            report.append("akış$si ${if (p.role == "main") "ana" else "ses[${p.lang}] ${p.name}"}: ${p.segments.size} parça, ilk parça ${Format.host(p.segments.firstOrNull()?.url ?: "")}${p.segments.firstOrNull()?.url?.substringBefore('?')?.substringAfterLast('/')?.let { " /$it" } ?: ""}\n")
+            report.append("   dosya: ${describe(streamFiles[si])}\n")
+            report.append("   izler: ${Diag.tracks { ex -> ex.setDataSource(streamFiles[si].path) }}\n")
+        }
 
         if (audioOnly) {
             val name = "$base.m4a"
@@ -125,6 +133,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             try {
                 ctx.segTotal = 1000; ctx.segDone = 0
                 val r = runMux(out, inputs(allAudio = !hasSepAudio, video = false))
+                report.append("birleştirme (yalnız ses):\n").append(r.notes).append('\n')
                 out.publish(app)
                 e.outputUri = out.encode(); e.fileName = name; merged = true
                 if (r.audioTracks == 0) e.error = "Uyarı: kaynakta ses bulunamadı.\n" + diag()
@@ -139,11 +148,13 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             try {
                 ctx.segTotal = 1000; ctx.segDone = 0
                 var r = runMux(out, inputs(allAudio = false, video = true))
+                report.append("birleştirme:\n").append(r.notes).append('\n')
                 // Seçilen ayrı ses izi boş ya da eksik çıktıysa ana akışın kendi sesiyle yeniden birleştir
                 if (r.audioMissing && r.skippedAudio > 0) {
                     ctx.phase = "Ses yeniden ekleniyor"; ctx.segDone = 0; ctx.emit()
                     try { app.contentResolver.openFileDescriptor(out.uri, "rwt")?.close() } catch (_: Exception) {}
                     r = runMux(out, inputs(allAudio = true, video = true)); usedAllAudio = true
+                    report.append("ses eksikti, ana akışın sesiyle yeniden:\n").append(r.notes).append('\n')
                     ctx.phase = "Birleştiriliyor"
                 }
                 val audioTracks = if (r.audioMissing) 0 else r.audioTracks
@@ -202,6 +213,16 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             }
         }
         e.extraOutputs = extras.joinToString("\n")
+        // Tanı raporu: çıktıdaki izler ve sesin gerçekten duyulup duyulmadığı
+        OutputFile.decode(e.outputUri)?.uri?.let { u ->
+            report.append("çıktı ${e.fileName}: ${Diag.tracks { ex -> ex.setDataSource(app, u, null) }}\n")
+            val level = Diag.audioLevel(app, u)
+            report.append("ses ölçümü: $level\n")
+            // Ölçüm sessiz diyorsa kartta uyarı çıksın (dokununca ayrıntı ve rapor)
+            if (e.error == null && !audioOnly && (level.contains("SESSİZ") || level.startsWith("ses izi yok") || level.startsWith("ses izinde örnek yok") || level.startsWith("ses çözülemedi")))
+                e.error = "Uyarı: çıktıda ses duyulmuyor ($level). Ayrıntıdaki tanı raporunu kopyalayıp gönderin."
+        }
+        e.meta = KV.encode(KV.decode(e.meta) + ("diag" to report.toString()))
         e.totalBytes = e.downloadedBytes
         dir.deleteRecursively()
     }
