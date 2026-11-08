@@ -50,28 +50,53 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         e.downloadedBytes = tasks.sumOf { segFile(it.first, it.second).let { f -> if (f.exists()) f.length() else 0L } }
         ctx.phase = "İndiriliyor"
 
-        // 1) Segmentler (paralel)
+        // 1) Segmentler (paralel). Sunucu "çok fazla istek" (429/503) derse durmaz: bağlantı sayısı yarıya
+        // iner, beklenir, aynı parça yeniden denenir; bir süre sorunsuz gidince bağlantılar geri artar.
         val next = AtomicInteger(0)
+        val workers = app.settings.parts.coerceIn(2, 16)
+        val allowed = AtomicInteger(workers)
+        val lastThrottle = java.util.concurrent.atomic.AtomicLong(0)
+        suspend fun fetchSegment(seg: Hls.Segment): ByteArray {
+            var attempt = 0
+            while (true) {
+                try { return Http.bytes(e, seg.url, seg.range) { ctx.onBytes(it) } }
+                catch (x: HttpException) {
+                    if ((x.code != 429 && x.code != 503) || attempt >= 10) throw x
+                    attempt++
+                    val n = maxOf(1, allowed.get() / 2)
+                    allowed.set(n); lastThrottle.set(System.currentTimeMillis())
+                    ctx.phase = "Sunucu yavaşlattı · $n bağlantı"; ctx.emit()
+                    kotlinx.coroutines.delay(minOf(60_000L, 4_000L * attempt))
+                }
+            }
+        }
         coroutineScope {
-            repeat(app.settings.parts.coerceIn(2, 16)) {
+            repeat(workers) { w ->
                 launch {
                     while (true) {
+                        while (w >= allowed.get()) kotlinx.coroutines.delay(500)
                         val k = next.getAndIncrement()
                         if (k >= tasks.size) break
                         val (si, i, seg) = tasks[k]
                         val f = segFile(si, i)
                         if (f.exists()) continue
-                        var data = Http.bytes(e, seg.url, seg.range) { ctx.onBytes(it) }
+                        var data = fetchSegment(seg)
                         data = if (plans[si].raw) data else Hls.stripJunk(decrypt(seg, data))
                         val tmp = File(f.path + ".part")
                         tmp.writeBytes(data)
                         tmp.renameTo(f)
                         ctx.segDone++
                         if (ctx.segDone > 2 && e.type != "youtube") e.totalBytes = e.downloadedBytes * ctx.segTotal / ctx.segDone
+                        // 30 sn sorunsuz: bir bağlantı geri
+                        if (allowed.get() < workers && System.currentTimeMillis() - lastThrottle.get() > 30_000) {
+                            if (allowed.incrementAndGet() >= workers) { ctx.phase = "İndiriliyor"; ctx.emit() }
+                            lastThrottle.set(System.currentTimeMillis())
+                        }
                     }
                 }
             }
         }
+        ctx.phase = "İndiriliyor"
         // Init segmentleri (fMP4)
         for ((si, p) in plans.withIndex()) for (m in p.segments.mapNotNull { it.map }.distinct()) {
             val f = initFile(si, m)
@@ -84,7 +109,11 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         ctx.emit()
         e.status = com.movietrack.app.data.Status.MERGING
         ctx.saveNow()
+        val t0 = System.nanoTime()
         val streamFiles = plans.mapIndexed { si, p -> concat(si, p, skipAds) }
+        val concatMs = (System.nanoTime() - t0) / 1_000_000
+        val streamBytes = streamFiles.sumOf { it.length() }
+        val timings = StringBuilder("hız: parça birleştirme ${speedOf(streamBytes, concatMs)}")
 
         // 3) Çıktı
         val base = meta["base"]?.takeIf { it.isNotBlank() } ?: e.fileName.substringBeforeLast('.')
@@ -103,18 +132,50 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         }
         // Birleştirme ayrı iş parçacığında: büyük dosyayı açmak (setDataSource) bölünemiyor; Duraklat/Sil
         // basılınca indirme hemen durur, arka plandaki birleştirme ilk denetimde kendiliğinden biter
+        // MP4 önce uygulamanın kendi klasörüne (doğrudan dosya sistemi) yazılır, sonra büyük bloklarla tek seferde
+        // İndirilenler'e kopyalanır: MP4 yazıcısının çok sayıdaki küçük yazması bazı telefonlarda İndirilenler'in
+        // ara katmanından (FUSE) geçince çok yavaşlıyor. Yer yetmezse doğrudan yazılır.
         suspend fun runMux(out: OutputFile, ins: List<Muxer.Input>): Muxer.Result {
             val done = kotlinx.coroutines.CompletableDeferred<Muxer.Result>()
+            val inBytes = ins.sumOf { File(it.path).length() }
+            val free = try { android.os.StatFs(dir.path).availableBytes } catch (_: Exception) { 0L }
+            val tmp = if (free > inBytes * 13 / 10) File(dir, "out-${System.nanoTime()}.tmp") else null
+            val ms0 = System.nanoTime()
             kotlin.concurrent.thread(name = "birlestirme-${e.id}") {
                 try {
-                    done.complete(out.openRw(app).use { pfd ->
-                        Muxer.mux(ins, pfd.fileDescriptor, totalUs, active = { job?.isActive != false && !done.isCancelled }) { f ->
-                            ctx.segDone = (f * 1000).toInt(); ctx.emit()
-                        }
-                    })
+                    fun go(fd: java.io.FileDescriptor) = Muxer.mux(ins, fd, totalUs, active = { job?.isActive != false && !done.isCancelled }) { f ->
+                        ctx.segDone = (f * (if (tmp != null) 900 else 1000)).toInt(); ctx.emit()
+                    }
+                    done.complete(if (tmp != null) FileOutputStream(tmp).use { go(it.fd) } else out.openRw(app).use { go(it.fileDescriptor) })
                 } catch (t: Throwable) { done.completeExceptionally(t) }
             }
-            return done.await()
+            val r = try { done.await() } catch (t: Throwable) { tmp?.delete(); throw t }
+            val muxMs = (System.nanoTime() - ms0) / 1_000_000
+            timings.append(", MP4 yazma ${speedOf(inBytes, muxMs)}${if (tmp == null) " (doğrudan, yer az)" else ""}")
+            if (tmp != null) {
+                val c0 = System.nanoTime()
+                val prevPhase = ctx.phase
+                ctx.phase = "Kaydediliyor"; ctx.segDone = 900; ctx.emit()
+                try {
+                    val len = tmp.length().coerceAtLeast(1)
+                    out.openRw(app).use { pfd ->
+                        FileOutputStream(pfd.fileDescriptor).use { os ->
+                            FileInputStream(tmp).use { fin ->
+                                val b = ByteArray(8 shl 20)
+                                var copied = 0L
+                                while (true) {
+                                    val n = fin.read(b); if (n < 0) break
+                                    os.write(b, 0, n); copied += n
+                                    ctx.segDone = 900 + (copied * 100 / len).toInt(); ctx.emit()
+                                    coroutineContext.ensureActive()
+                                }
+                            }
+                        }
+                    }
+                    timings.append(", kopyalama ${speedOf(len, (System.nanoTime() - c0) / 1_000_000)}")
+                } finally { tmp.delete(); ctx.phase = prevPhase }
+            }
+            return r
         }
         fun diag() = "Tanı: " + plans.indices.joinToString(" · ") { si -> "${if (plans[si].role == "main") "ana" else "ses[${plans[si].lang}]"} ${plans[si].segments.size} parça, ${describe(streamFiles[si])}" }
         val audioLang = plans.firstOrNull { it.role == "audio" }?.lang ?: meta["muxedLang"] ?: ""
@@ -213,6 +274,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             }
         }
         e.extraOutputs = extras.joinToString("\n")
+        report.append(timings).append('\n')
         // Tanı raporu: çıktıdaki izler ve sesin gerçekten duyulup duyulmadığı
         OutputFile.decode(e.outputUri)?.uri?.let { u ->
             report.append("çıktı ${e.fileName}: ${Diag.tracks { ex -> ex.setDataSource(app, u, null) }}\n")
@@ -329,6 +391,8 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         }
         return out
     }
+
+    private fun speedOf(bytes: Long, ms: Long) = "%.1f sn (%.1f MB/sn)".format(java.util.Locale.US, ms / 1000.0, if (ms > 0) bytes / 1048576.0 / (ms / 1000.0) else 0.0)
 
     /** Tanı için: dosyanın biçimi ve içindeki izler ("TS, görüntü 1 ses 0" ya da ilk baytlar). */
     private fun describe(f: File): String = try {

@@ -47,6 +47,7 @@ class DownloadE2ETest {
     private lateinit var scenario: ActivityScenario<MainActivity>
     private val run = System.currentTimeMillis().toString(36)
 
+    private val busyHits = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private fun asset(p: String): ByteArray? = try { assets.open("fx/$p").use { it.readBytes() } } catch (_: Exception) { null }
 
     @Before
@@ -75,6 +76,15 @@ class DownloadE2ETest {
                     val a = asset("aac/" + n.replace(".png", ".aac")) ?: return MockResponse().setResponseCode(404)
                     val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(1200) { (it * 7).toByte() }
                     return ok(png + a, "image/png", request)
+                }
+                // Yoğun sunucu: her parçanın ilk 7 isteğine 429 (hızlı yeniden denemeler tükenir)
+                if (path.startsWith("busy/")) {
+                    val n = path.removePrefix("busy/")
+                    if (n.endsWith(".ts")) {
+                        val c = busyHits.merge(n, 1, Int::plus)!!
+                        if (c <= 7) return MockResponse().setResponseCode(429)
+                    }
+                    return ok(asset("ts/$n") ?: return MockResponse().setResponseCode(404), if (n.endsWith(".m3u8")) "application/vnd.apple.mpegurl" else "video/mp2t", request)
                 }
                 // gizlenmiş liste adı: master.txt
                 if (path == "hidden/master.txt") {
@@ -230,6 +240,14 @@ class DownloadE2ETest {
         assertEquals(1, i.audios.size)
         val e = download(i, u, "clock")
         assertPlayable(e, "Başka saatli ses izi")
+    }
+
+    /** Sunucu "çok fazla istek" (429) diyor: indirme durmamalı, yavaşlayıp tamamlanmalı. */
+    @Test
+    fun survivesTooManyRequests() {
+        val u = url("busy/index.m3u8")
+        val e = download(analyze(u), u, "busy")
+        assertPlayable(e, "429 sonrası")
     }
 
     /** Yalnızca ses: ayrı ses izi varsa görüntü inmeden .m4a */
