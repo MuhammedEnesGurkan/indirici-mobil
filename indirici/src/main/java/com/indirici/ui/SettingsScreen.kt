@@ -291,6 +291,17 @@ private fun BrowserPage() {
             }
         }
     }
+    Section("Görünüm") {
+        val ui = App.instance.ui
+        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Adres çubuğu", style = MaterialTheme.typography.labelLarge)
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                SegmentedButton(!ui.addressBarTop, { ui.addressBarTop = false }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Altta") }
+                SegmentedButton(ui.addressBarTop, { ui.addressBarTop = true }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Üstte") }
+            }
+            Text("Altta tek elle kullanım kolay; üstte klasik tarayıcı düzeni.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
     Section("Sayfalar") {
         SwitchItem("Reklam ve izleyici engelleme", null, s.adBlock) { s.adBlock = it }
         SwitchItem("Açılır pencere engelleme", "Dokunmadan açılan pencereleri engeller", s.popupBlock) { s.popupBlock = it; TabManager.applySettings() }

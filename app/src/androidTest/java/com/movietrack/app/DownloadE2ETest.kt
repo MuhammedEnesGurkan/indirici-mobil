@@ -140,8 +140,9 @@ class DownloadE2ETest {
     private fun analyze(u: String, kind: String? = null, referer: String? = null) = runBlocking { Analyzer.analyze(u, kind, referer, null) }
 
     private fun download(i: Analyzer.Info, u: String, name: String, quality: String? = i.qualities.firstOrNull()?.id,
-                         audios: List<String> = i.audios.map { it.id }, subs: List<String> = emptyList(), mode: String = "mp4", referer: String? = null): DownloadEntity = runBlocking {
-        val req = Requests.build(i, u, "test-$name-$run", "Test", quality, audios, subs, mode, referer = referer)
+                         audios: List<String> = i.audios.map { it.id }, subs: List<String> = emptyList(), mode: String = "mp4", referer: String? = null,
+                         audioOnly: Boolean = false, alsoAudio: Boolean = false): DownloadEntity = runBlocking {
+        val req = Requests.build(i, u, "test-$name-$run", "Test", quality, audios, subs, mode, referer = referer, audioOnly = audioOnly, alsoAudio = alsoAudio)
         val id = app.downloads.add(req)
         val dao = app.db.downloads()
         val deadline = System.currentTimeMillis() + 120_000
@@ -227,6 +228,38 @@ class DownloadE2ETest {
         assertEquals(1, i.audios.size)
         val e = download(i, u, "clock")
         assertPlayable(e, "Başka saatli ses izi")
+    }
+
+    /** Yalnızca ses: ayrı ses izi varsa görüntü inmeden .m4a */
+    @Test
+    fun audioOnlyFromSeparateTrack() {
+        val u = url("split/master.m3u8")
+        val e = download(analyze(u), u, "yalnizses", audioOnly = true)
+        val p = probe(output(e))
+        assertTrue("dosya adı: ${e.fileName}", e.fileName.endsWith(".m4a"))
+        assertEquals("görüntü olmamalı ($p)", 0, p.video)
+        assertTrue("ses ($p)", p.audio == 1 && p.audioSec in 5.0..7.5)
+    }
+
+    /** Yalnızca ses: ses görüntü akışının içindeyse ayıklanır */
+    @Test
+    fun audioOnlyFromMuxedStream() {
+        val u = url("ts/index.m3u8")
+        val e = download(analyze(u), u, "yalnizses2", audioOnly = true)
+        val p = probe(output(e))
+        assertEquals("görüntü olmamalı ($p)", 0, p.video)
+        assertTrue("ses ($p)", p.audio == 1 && p.audioSec in 5.0..7.5)
+    }
+
+    /** Sesi ayrıca da kaydet: MP4'ün yanında .m4a */
+    @Test
+    fun alsoSavesAudioFile() {
+        val u = url("split/master.m3u8")
+        val e = download(analyze(u), u, "ayricases", alsoAudio = true)
+        assertPlayable(e, "Sesli MP4")
+        val extra = e.extraOutputs.lines().firstOrNull { it.endsWith("aud:tr") } ?: fail("ek ses dosyası yok: ${e.extraOutputs}").let { "" }
+        val p = probe(OutputFile.decode(extra.substringBeforeLast('|'))!!.uri)
+        assertTrue("ek ses ($p)", p.video == 0 && p.audio == 1 && p.audioSec in 5.0..7.5)
     }
 
     /** Ham .aac ses parçaları, her birinin başında ID3 zaman etiketi (Apple tarzı "packed audio"). */

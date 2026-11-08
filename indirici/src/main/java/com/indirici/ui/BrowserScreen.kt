@@ -180,15 +180,11 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
     val ytPage = !isHome && com.movietrack.app.download.YouTube.id(url) != null
     val count = if (ytPage) 1 else visible.count { it.url !in children }
 
-    Column(Modifier.fillMaxSize().background(c.surface)) {
-        Box(Modifier.weight(1f)) {
-            if (isHome) StartPage(tab.incognito, onOpen = { tab.load(it) })
-            else Column {
-                if (progress in 1..99) LinearProgressIndicator(progress = { progress / 100f }, Modifier.fillMaxWidth().height(3.dp), color = c.primary, trackColor = c.surface, drawStopIndicator = {})
-                AndroidView(factory = { FrameLayout(it) }, update = { attachWebView(it, tab.webView) }, modifier = Modifier.fillMaxSize())
-            }
-        }
-        // Adres çubuğu altta: tek elle erişim
+    // Adres çubuğu: varsayılan altta (tek elle erişim); Ayarlar › Tarayıcı'dan ya da menüden üste alınabilir
+    val uiV by App.instance.ui.version.collectAsState()
+    uiV.hashCode()
+    val barTop = App.instance.ui.addressBarTop
+    val addressBar: @Composable () -> Unit = {
         Row(Modifier.fillMaxWidth().background(c.surfaceContainer).padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(24.dp)).background(c.surfaceContainerHighest).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(when { tab.incognito -> Icons.Rounded.VisibilityOff; !isHome && url.startsWith("https") && !editing -> Icons.Rounded.Lock; else -> Icons.Rounded.Search }, null,
@@ -232,6 +228,7 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
                     DropdownMenuItem({ Text("Yeni sekme") }, { menu = false; TabManager.newTab(null) })
                     DropdownMenuItem({ Text("Yeni gizli sekme") }, { menu = false; TabManager.newTab(null, incognito = true) })
                     DropdownMenuItem({ Text("Açılış sayfası") }, { menu = false; tab.isHome.value = true })
+                    DropdownMenuItem({ Text(if (barTop) "Adres çubuğunu alta al" else "Adres çubuğunu üste al") }, { menu = false; App.instance.ui.addressBarTop = !barTop })
                     if (!isHome) DropdownMenuItem({ Text("Yer imlerine ekle") }, { menu = false; scope.launch { App.instance.db.browser().addBookmark(BookmarkEntity(title = title, url = url)); snack.showSnackbar("Yer imi eklendi") } })
                     DropdownMenuItem({ Text("Yer imleri") }, { menu = false; panel = "bookmarks" })
                     DropdownMenuItem({ Text("Geçmiş") }, { menu = false; panel = "history" })
@@ -243,6 +240,17 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
                 }
             }
         }
+    }
+    Column(Modifier.fillMaxSize().background(c.surface)) {
+        if (barTop) addressBar()
+        Box(Modifier.weight(1f)) {
+            if (isHome) StartPage(tab.incognito, onOpen = { tab.load(it) })
+            else Column {
+                if (progress in 1..99) LinearProgressIndicator(progress = { progress / 100f }, Modifier.fillMaxWidth().height(3.dp), color = c.primary, trackColor = c.surface, drawStopIndicator = {})
+                AndroidView(factory = { FrameLayout(it) }, update = { attachWebView(it, tab.webView) }, modifier = Modifier.fillMaxSize())
+            }
+        }
+        if (!barTop) addressBar()
     }
 
     fullscreen?.view?.let { v ->

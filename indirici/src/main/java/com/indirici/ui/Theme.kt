@@ -52,6 +52,10 @@ class UiPrefs(context: Context) {
     var filesGrid: Boolean
         get() = p.getBoolean("filesGrid", false)
         set(v) { p.edit().putBoolean("filesGrid", v).apply(); changed() }
+    /** Tarayıcıda adres çubuğu üstte mi (varsayılan altta) */
+    var addressBarTop: Boolean
+        get() = p.getBoolean("addressBarTop", false)
+        set(v) { p.edit().putBoolean("addressBarTop", v).apply(); changed() }
     /** Renk seçici: SEEDS içindeki sıra (0 = varsayılan çivit). */
     var seed: Int
         get() = p.getInt("seed", 0)

@@ -8,6 +8,8 @@ object Requests {
         mode: String = "mp4", skipAds: Boolean = true,
         referer: String? = null, userAgent: String? = null, pageTitle: String? = null,
         inline: Map<String, String> = emptyMap(),
+        audioOnly: Boolean = false,
+        alsoAudio: Boolean = false,
     ): NewDownload {
         val labels = buildList {
             i.qualities.firstOrNull { it.id == quality }?.let { if (it.height > 0) add("${it.height}p") }
@@ -26,6 +28,10 @@ object Requests {
             "muxedLang" to i.muxedAudioLang,
         )
         inline.forEach { (k, v) -> if (v.length < 300_000) meta["inline:$k"] = v }
+        if (audioOnly) meta["audioOnly"] = "1"
+        if (alsoAudio) meta["alsoAudio"] = "1"
+        if (audioOnly) return NewDownload(url = url, fileName = "$name.m4a", type = i.kind, mime = "audio/mp4", size = 0,
+            referer = referer ?: if (i.kind == "youtube") i.url else null, userAgent = ua, pageUrl = referer ?: i.url, title = pageTitle, meta = meta, labels = labels)
         return NewDownload(url = url, fileName = "$name.mp4", type = i.kind, mime = "video/mp4", size = i.qualities.firstOrNull { it.id == quality }?.estSize ?: 0,
             referer = referer ?: if (i.kind == "youtube") i.url else null, userAgent = ua, pageUrl = referer ?: i.url, title = pageTitle, meta = meta, labels = labels)
     }

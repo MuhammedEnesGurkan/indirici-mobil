@@ -39,7 +39,10 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         ctx.phase = "Liste alınıyor"
         ctx.emit()
         val skipAds = meta["skipAds"] != "0"
-        val plans = when (e.type) { "dash" -> planDash(); "youtube" -> planYoutube(); else -> planHls() }
+        val audioOnly = meta["audioOnly"] == "1"
+        val allPlans = when (e.type) { "dash" -> planDash(); "youtube" -> planYoutube(); else -> planHls() }
+        // Yalnızca ses: ayrı ses izi varsa görüntü hiç indirilmez; yoksa ses ana akıştan ayıklanır
+        val plans = if (audioOnly && allPlans.any { it.role == "audio" }) allPlans.filter { it.role == "audio" } else allPlans
         val tasks = plans.flatMapIndexed { si, p -> p.segments.mapIndexedNotNull { i, s -> if (skipAds && s.isAd) null else Triple(si, i, s) } }
         ctx.segTotal = tasks.size
         ctx.segDone = tasks.count { segFile(it.first, it.second).exists() }
@@ -87,42 +90,60 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         val folder = meta["folder"] ?: Category.VIDEO
         val extras = ArrayList<String>()
         var merged = false
-        if (meta["mode"] != "separate") {
+        val job = coroutineContext[kotlinx.coroutines.Job]
+        val totalUs = ((plans.firstOrNull { it.role == "main" } ?: plans.first()).segments
+            .filter { !(skipAds && it.isAd) }.sumOf { it.duration } * 1_000_000).toLong()
+        val hasSepAudio = plans.any { it.role == "audio" }
+        fun inputs(allAudio: Boolean, video: Boolean) = plans.indices.map { si ->
+            val p = plans[si]
+            // Ayrı ses izi seçildiyse ana akıştaki gömülü ses alınmaz (aynı dilin iki kopyası olmasın)
+            Muxer.Input(streamFiles[si].path, takeVideo = video && p.role == "main",
+                takeAudio = allAudio || p.role == "audio" || !hasSepAudio, lang = p.lang)
+        }
+        // Birleştirme ayrı iş parçacığında: büyük dosyayı açmak (setDataSource) bölünemiyor; Duraklat/Sil
+        // basılınca indirme hemen durur, arka plandaki birleştirme ilk denetimde kendiliğinden biter
+        suspend fun runMux(out: OutputFile, ins: List<Muxer.Input>): Muxer.Result {
+            val done = kotlinx.coroutines.CompletableDeferred<Muxer.Result>()
+            kotlin.concurrent.thread(name = "birlestirme-${e.id}") {
+                try {
+                    done.complete(out.openRw(app).use { pfd ->
+                        Muxer.mux(ins, pfd.fileDescriptor, totalUs, active = { job?.isActive != false && !done.isCancelled }) { f ->
+                            ctx.segDone = (f * 1000).toInt(); ctx.emit()
+                        }
+                    })
+                } catch (t: Throwable) { done.completeExceptionally(t) }
+            }
+            return done.await()
+        }
+        fun diag() = "Tanı: " + plans.indices.joinToString(" · ") { si -> "${if (plans[si].role == "main") "ana" else "ses[${plans[si].lang}]"} ${plans[si].segments.size} parça, ${describe(streamFiles[si])}" }
+        val audioLang = plans.firstOrNull { it.role == "audio" }?.lang ?: meta["muxedLang"] ?: ""
+        var usedAllAudio = false
+
+        if (audioOnly) {
+            val name = "$base.m4a"
+            val out = OutputStore.create(app, name, "audio/mp4", folder)
+            try {
+                ctx.segTotal = 1000; ctx.segDone = 0
+                val r = runMux(out, inputs(allAudio = !hasSepAudio, video = false))
+                out.publish(app)
+                e.outputUri = out.encode(); e.fileName = name; merged = true
+                if (r.audioTracks == 0) e.error = "Uyarı: kaynakta ses bulunamadı.\n" + diag()
+            } catch (t: Throwable) {
+                out.delete(app)
+                if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
+                e.error = "Uyarı: ses dosyası yazılamadı (${t.message}); akış ayrı kaydedildi."
+            }
+        } else if (meta["mode"] != "separate") {
             val name = "$base.mp4"
             val out = OutputStore.create(app, name, "video/mp4", folder)
             try {
-                // Emülatör ölçümü: doğrudan İndirilenler'e yazmak, önce uygulama klasörüne yazıp kopyalamaktan hızlı
-                val job = coroutineContext[kotlinx.coroutines.Job]
-                val totalUs = (plans.firstOrNull { it.role == "main" } ?: plans.first()).segments
-                    .filter { !(skipAds && it.isAd) }.sumOf { it.duration } * 1_000_000
                 ctx.segTotal = 1000; ctx.segDone = 0
-                fun inputs(allAudio: Boolean) = plans.indices.map { si ->
-                    val p = plans[si]
-                    // Ayrı ses izi seçildiyse ana akıştaki gömülü ses alınmaz (aynı dilin iki kopyası olmasın)
-                    Muxer.Input(streamFiles[si].path, takeVideo = p.role == "main",
-                        takeAudio = allAudio || p.role == "audio" || plans.none { it.role == "audio" }, lang = p.lang)
-                }
-                // Birleştirme ayrı iş parçacığında: büyük dosyayı açmak (setDataSource) bölünemiyor; Duraklat/Sil
-                // basılınca indirme hemen durur, arka plandaki birleştirme ilk denetimde kendiliğinden biter
-                suspend fun runMux(allAudio: Boolean): Muxer.Result {
-                    val done = kotlinx.coroutines.CompletableDeferred<Muxer.Result>()
-                    kotlin.concurrent.thread(name = "birlestirme-${e.id}") {
-                        try {
-                            done.complete(out.openRw(app).use { pfd ->
-                                Muxer.mux(inputs(allAudio), pfd.fileDescriptor, totalUs.toLong(), active = { job?.isActive != false && !done.isCancelled }) { f ->
-                                    ctx.segDone = (f * 1000).toInt(); ctx.emit()
-                                }
-                            })
-                        } catch (t: Throwable) { done.completeExceptionally(t) }
-                    }
-                    return done.await()
-                }
-                var r = runMux(false)
+                var r = runMux(out, inputs(allAudio = false, video = true))
                 // Seçilen ayrı ses izi boş ya da eksik çıktıysa ana akışın kendi sesiyle yeniden birleştir
                 if (r.audioMissing && r.skippedAudio > 0) {
                     ctx.phase = "Ses yeniden ekleniyor"; ctx.segDone = 0; ctx.emit()
                     try { app.contentResolver.openFileDescriptor(out.uri, "rwt")?.close() } catch (_: Exception) {}
-                    r = runMux(true)
+                    r = runMux(out, inputs(allAudio = true, video = true)); usedAllAudio = true
                     ctx.phase = "Birleştiriliyor"
                 }
                 val audioTracks = if (r.audioMissing) 0 else r.audioTracks
@@ -130,12 +151,25 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 e.outputUri = out.encode()
                 e.fileName = name
                 merged = true
-                if (audioTracks == 0) e.error = "Uyarı: dosyada ses yok ya da eksik. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin.\n" +
-                    "Tanı: " + plans.indices.joinToString(" · ") { si -> "${if (plans[si].role == "main") "ana" else "ses[${plans[si].lang}]"} ${plans[si].segments.size} parça, ${describe(streamFiles[si])}" }
+                if (audioTracks == 0) e.error = "Uyarı: dosyada ses yok ya da eksik. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin.\n" + diag()
             } catch (t: Throwable) {
                 out.delete(app)
                 if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
                 e.error = "Uyarı: MP4'e birleştirilemedi (${t.message}); dosyalar ayrı kaydedildi."
+            }
+            // İstenirse ses ayrıca .m4a olarak da (müzik çalarlar, arka planda dinleme için)
+            if (merged && meta["alsoAudio"] == "1") {
+                ctx.phase = "Ses ayrıca kaydediliyor"; ctx.segDone = 0; ctx.emit()
+                val aname = "$base.${Lang.normalize(audioLang).ifEmpty { "ses" }}.m4a"
+                val aout = OutputStore.create(app, aname, "audio/mp4", folder)
+                try {
+                    val r = runMux(aout, inputs(allAudio = usedAllAudio, video = false))
+                    if (r.audioTracks > 0) { aout.publish(app); extras += "${aout.encode()}|${Lang.audLabel(audioLang)}" } else aout.delete(app)
+                } catch (t: Throwable) {
+                    aout.delete(app)
+                    if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
+                }
+                ctx.phase = "Birleştiriliyor"
             }
         }
         if (!merged) {

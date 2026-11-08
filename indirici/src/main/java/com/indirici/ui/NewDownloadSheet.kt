@@ -129,6 +129,8 @@ fun NewDownloadSheet(req: DownloadRequest, onDismiss: () -> Unit, onQueued: (Str
     val subs = remember { mutableStateListOf<String>() }
     var mode by remember { mutableStateOf(s.outputMode) }
     var skipAds by remember { mutableStateOf(s.skipAds) }
+    var audioOnly by remember { mutableStateOf(false) }
+    var alsoAudio by remember { mutableStateOf(false) }
     var referer by remember { mutableStateOf(req.referer ?: "") }
     var duplicate by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
@@ -170,8 +172,11 @@ fun NewDownloadSheet(req: DownloadRequest, onDismiss: () -> Unit, onQueued: (Str
         val i = info ?: return
         scope.launch {
             if (parts != s.parts) s.parts = parts
-            val r = Requests.build(i, url.trim(), name.trim(), folder, quality, audios.toList(), subs.toList(), mode, skipAds,
-                referer.ifBlank { null }, req.userAgent, req.pageTitle, req.inline)
+            // Yalnızca ses ve ayrı ses izi yoksa ses görüntü akışından ayıklanır: en küçük kalite yeter
+            val q = if (audioOnly && i.audios.isEmpty()) i.qualities.lastOrNull { it.audio != false }?.id ?: quality else quality
+            val r = Requests.build(i, url.trim(), name.trim(), folder, q, audios.toList(), subs.toList(), mode, skipAds,
+                referer.ifBlank { null }, req.userAgent, req.pageTitle, req.inline,
+                audioOnly = audioOnly, alsoAudio = alsoAudio && !audioOnly)
             val id = app.downloads.add(r)
             if (!now) app.downloads.pause(id)
             onQueued(if (now) "İndirme başladı" else "Sıraya eklendi, duraklatılmış bekliyor")
@@ -218,10 +223,17 @@ fun NewDownloadSheet(req: DownloadRequest, onDismiss: () -> Unit, onQueued: (Str
                             leadingIcon = { Icon(Icons.Rounded.Folder, null, Modifier.size(18.dp)) }, trailingIcon = { Icon(Icons.Rounded.ExpandMore, null, Modifier.size(18.dp)) },
                             shape = RoundedCornerShape(12.dp), modifier = Modifier.heightIn(min = 40.dp))
                     }
-                    if (i.qualities.size > 1) QualityList(i, quality, recommended) { quality = it }
+                    if (i.kind != "direct") SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        SegmentedButton(!audioOnly, { audioOnly = false }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Video") }
+                        SegmentedButton(audioOnly, { audioOnly = true }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Sadece ses") }
+                    }
+                    if (audioOnly) Text(if (i.audios.isNotEmpty()) "Yalnızca ses izi iner; görüntü indirilmez. Çıktı: .m4a"
+                        else "Ses görüntü akışının içinde; en küçük kalite indirilip ses ayıklanır. Çıktı: .m4a",
+                        style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
+                    if (i.qualities.size > 1 && !audioOnly) QualityList(i, quality, recommended) { quality = it }
                     if (i.audios.isNotEmpty()) ChipGroup("Ses dili", i.audios.map { it.id to "${Lang.displayName(it.lang).takeIf { n -> n != "Bilinmeyen dil" } ?: it.name}" }, audios)
                     if (i.subtitles.isNotEmpty()) ChipGroup("Altyazı", i.subtitles.map { it.id to "${Lang.displayName(it.lang).takeIf { n -> n != "Bilinmeyen dil" } ?: it.name}" }, subs)
-                    if (noAudio(i, quality, audios)) WarningCard(
+                    if (!audioOnly && noAudio(i, quality, audios)) WarningCard(
                         if (i.audios.isEmpty()) "Bu kalitede ses yok, video sessiz iner. Başka bir kalite seç ya da sayfadaki ana listeyi aç."
                         else "Hiç ses dili seçilmedi, video sessiz iner.")
                 }
@@ -249,6 +261,13 @@ fun NewDownloadSheet(req: DownloadRequest, onDismiss: () -> Unit, onQueued: (Str
                                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                                     SegmentedButton(mode == "mp4", { mode = "mp4" }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Tek MP4") }
                                     SegmentedButton(mode == "separate", { mode = "separate" }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Ayrı dosyalar") }
+                                }
+                                if (!audioOnly) Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Sesi ayrıca da kaydet", style = MaterialTheme.typography.labelLarge)
+                                        Text("Videonun yanına .m4a ses dosyası", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
+                                    }
+                                    Switch(alsoAudio, { alsoAudio = it })
                                 }
                                 if ((info?.adBreaks ?: 0) > 0) Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Reklam aralarını atla (${info?.adBreaks})", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
