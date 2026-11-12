@@ -189,6 +189,8 @@ private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (Downlo
             }
             HorizontalDivider(Modifier.padding(horizontal = 24.dp), color = c.outlineVariant)
             ActionRow(Icons.Rounded.PlayCircle, "Aç") { onDismiss(); openFile(ctx, e) }
+            if (categoryOf(e) == Category.VIDEO) ActionRow(Icons.Rounded.PlayCircle,
+                if (e.extraOutputs.contains("subtitle:")) "Başka oynatıcıda aç (altyazılı)" else "Başka oynatıcıda aç") { onDismiss(); Open.openExternal(ctx, e) }
             ActionRow(Icons.Rounded.Share, "Paylaş") { onDismiss(); Open.share(ctx, e) }
             ActionRow(Icons.Rounded.Info, "Ayrıntılar") { onDetail() }
             ActionRow(Icons.Rounded.Edit, "Yeniden adlandır") { rename = true }

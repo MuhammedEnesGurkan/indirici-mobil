@@ -459,7 +459,8 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
     }
 
     private suspend fun fetchSubtitle(url: String): String {
-        val text = Http.text(e, url)
+        // BOM kalırsa "WEBVTT" tanınmıyor ve VTT, .srt adıyla bozuk kaydediliyordu (oynatıcı hiç göstermiyordu)
+        val text = Http.text(e, url).removePrefix("\uFEFF")
         val cues = ArrayList<Subtitles.Cue>()
         if (text.trimStart().startsWith("#EXTM3U")) {
             val m = Hls.parseMedia(text, url)
@@ -488,9 +489,12 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 val off = if (ts != null && base != null) (ts - base) / 90000.0 else 0.0
                 c.forEach { cues += it.copy(start = it.start + off, end = it.end + off) }
             }
-        } else if (text.trimStart().startsWith("WEBVTT")) {
+        } else {
+            // WEBVTT, SRT ya da başlıksız VTT: hepsi temiz SRT'ye çevrilir (oynatıcılar ".000" biçimli
+            // VTT zamanlarını SRT içinde okuyamıyor). Çözülemeyen biçim (ASS vb.) olduğu gibi kalır.
             cues += Subtitles.parseVtt(text).first
-        } else return text // SRT vb. olduğu gibi
+            if (cues.isEmpty()) return text
+        }
         return Subtitles.toSrt(cues)
     }
 }

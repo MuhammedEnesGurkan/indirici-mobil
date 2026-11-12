@@ -149,4 +149,11 @@ class ParserTest {
         val npe = E.classify(NullPointerException("Attempt to invoke virtual method on a null object reference"))
         assertEquals(E.SYSTEM_MESSAGE, npe.message)
     }
+
+    @Test fun headerlessVttBecomesValidSrt() {
+        val vtt = "1\n00:01.500 --> 00:03.000\nMerhaba\n\n00:00:04.000 --> 00:00:05.250 align:start\n<c.yellow>Dünya</c>\n"
+        val srt = com.movietrack.app.download.Subtitles.toSrt(com.movietrack.app.download.Subtitles.parseVtt(vtt).first)
+        assertTrue(srt, srt.contains("00:00:01,500 --> 00:00:03,000\nMerhaba"))
+        assertTrue(srt, srt.contains("00:00:04,000 --> 00:00:05,250\nDünya"))
+    }
 }

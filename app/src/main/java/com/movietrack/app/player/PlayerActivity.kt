@@ -92,6 +92,14 @@ class PlayerActivity : ComponentActivity() {
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(s)).setMimeType(mime).setLanguage(langs.getOrNull(i)).setLabel("subtitle:${Lang.normalize(langs.getOrNull(i)).ifEmpty { "und" }}")
                 .setSelectionFlags(if (i == 0) C.SELECTION_FLAG_DEFAULT else 0).build()
         }
+        if (subConfigs.isNotEmpty()) {
+            // Altyazı varsa açık başlasın: ilk altyazının dili tercih edilir, dili bilinmeyen de seçilebilir
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setPreferredTextLanguage(langs.firstOrNull()?.let { Lang.normalize(it) }?.takeIf { it.isNotEmpty() && it != "und" })
+                .setSelectUndeterminedTextLanguage(true)
+                .build()
+        }
         player.setMediaItem(MediaItem.Builder().setUri(uri).setSubtitleConfigurations(subConfigs).build())
         player.prepare()
         val pos = App.instance.settings.resumePosition(resumeKey)
