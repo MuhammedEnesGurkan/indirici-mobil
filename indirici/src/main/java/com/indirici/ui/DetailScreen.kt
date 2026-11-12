@@ -201,7 +201,7 @@ fun DetailScreen(id: Long, onBack: () -> Unit) {
             if (s.kind == Kind.EXPIRED || s.kind == Kind.ERROR) Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.errorContainer).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(if (s.kind == Kind.EXPIRED) Icons.Rounded.LinkOff else s.icon, null, tint = c.onErrorContainer)
                 Text(if (s.kind == Kind.EXPIRED) "Sunucu bu bağlantıyı artık kabul etmiyor. Videonun sayfasını yeniden açıp yeni bağlantıyı ver; indirme %$pct'den devam eder."
-                    else (e.error ?: "Bilinmeyen hata") + "\nYeniden denersen kaldığı yerden devam eder.", style = MaterialTheme.typography.bodyMedium, color = c.onErrorContainer)
+                    else (e.error ?: com.movietrack.app.download.Errors.SYSTEM_MESSAGE).let { m -> if (m.contains("kaldığı yerden")) m else "$m\nYeniden denersen kaldığı yerden devam eder." }, style = MaterialTheme.typography.bodyMedium, color = c.onErrorContainer)
             }
 
             if (s.kind == Kind.DOWNLOADING || s.kind == Kind.CONNECTING) SpeedChart(samples.toList())
@@ -296,4 +296,4 @@ private fun describeTracks(ctx: android.content.Context, e: com.movietrack.app.d
             "$kind ${mime.substringAfter('/')}$lang" + if (!ok) " (telefonda yerleşik çözücü yok; uygulamanın oynatıcısı çalar)" else ""
         }.joinToString(" · ").ifEmpty { "iz bulunamadı" }
     } finally { ex.release() }
-} catch (t: Throwable) { "okunamadı: ${t.message}" }
+} catch (t: Throwable) { "okunamadı" }

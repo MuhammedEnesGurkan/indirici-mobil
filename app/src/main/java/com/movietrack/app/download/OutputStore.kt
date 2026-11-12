@@ -55,7 +55,7 @@ object OutputStore {
                 for (seg in subFolder.split('/').filter { it.isNotBlank() }) {
                     dir = dir.findFile(seg)?.takeIf { it.isDirectory } ?: dir.createDirectory(seg) ?: dir
                 }
-                val f = dir.createFile(type, name) ?: error("Seçilen klasörde dosya oluşturulamadı")
+                val f = dir.createFile(type, name) ?: userError("Seçilen klasöre dosya yazılamıyor. Ayarlar › İndirmeler'den klasörü yeniden seçin.")
                 return OutputFile(f.uri, false)
             }
         }
@@ -67,7 +67,7 @@ object OutputStore {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, rel)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
-            val uri = ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v) ?: error("İndirilenler klasörüne yazılamadı")
+            val uri = ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v) ?: userError("İndirilenler klasörüne yazılamadı. Telefonda yer olduğundan emin olun.")
             return OutputFile(uri, true)
         }
         @Suppress("DEPRECATION")

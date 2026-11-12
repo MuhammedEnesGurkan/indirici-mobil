@@ -68,7 +68,7 @@ object YouTube {
     fun size(url: String): Long = Regex("[?&]clen=(\\d+)").find(url)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
 
     suspend fun analyze(url: String): Analyzer.Info {
-        val vid = id(url) ?: error("YouTube video kimliği bulunamadı")
+        val vid = id(url) ?: userError("Bu bir YouTube video bağlantısı değil.")
         val errors = ArrayList<String>()
         var visitor: String? = null
         for (c in clients) {
@@ -104,7 +104,12 @@ object YouTube {
                 errors += "${c.key}: ${t.message ?: t.javaClass.simpleName}"
             }
         }
-        error("YouTube doğrudan adres vermedi (${errors.joinToString("; ")})")
+        throw UserError(
+            if (errors.any { it.contains("oturum", true) || it.contains("bot", true) || it.contains("sign in", true) })
+                "YouTube bu bağlantıdan indirmeye izin vermedi (oturum/bot doğrulaması istiyor). Biraz sonra ya da başka bir ağla deneyin."
+            else "YouTube bu video için indirme adresi vermedi.",
+            Exception(errors.joinToString("; ")),
+        )
     }
 
     fun parse(pr: JSONObject, pageUrl: String, ua: String): Analyzer.Info {

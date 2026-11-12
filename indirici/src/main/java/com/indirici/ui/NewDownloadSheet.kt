@@ -162,7 +162,7 @@ fun NewDownloadSheet(req: DownloadRequest, onDismiss: () -> Unit, onQueued: (Str
                 duplicate = app.downloads.existing(u) != null
                 info = i
             } catch (t: Throwable) {
-                error = "Bağlantı açılamadı: " + (t.message ?: t.javaClass.simpleName)
+                error = com.movietrack.app.download.Errors.message(t)
             } finally { loading = false }
         }
     }

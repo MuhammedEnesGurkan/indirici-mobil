@@ -1,6 +1,7 @@
 package com.movietrack.app
 
 import com.movietrack.app.download.Hls
+import com.movietrack.app.download.Errors.Kind as ErrKind
 import com.movietrack.app.util.EpisodeParser
 import com.movietrack.app.util.Lang
 import org.junit.Assert.assertEquals
@@ -121,5 +122,31 @@ class ParserTest {
         assertEquals(null, y.id("https://www.youtube.com/"))
         assertEquals(null, y.id("https://example.com/watch?v=jNQXAC9IVRw"))
         assertEquals(12345L, y.size("https://r1.googlevideo.com/videoplayback?itag=137&clen=12345&dur=19"))
+    }
+
+    @Test
+    fun errorMessagesAreFriendlyAndHideInternals() {
+        val E = com.movietrack.app.download.Errors
+        // Kullanıcının ağı
+        assertEquals(ErrKind.NETWORK, E.classify(java.net.SocketTimeoutException("timeout")).kind)
+        assertEquals(ErrKind.NETWORK, E.classify(java.net.UnknownHostException("cdn.example.com")).kind)
+        assertEquals(ErrKind.NETWORK, E.classify(java.net.SocketException("Connection reset")).kind)
+        assertEquals(ErrKind.NETWORK, E.classify(java.io.IOException("x", java.net.ConnectException("refused"))).kind)
+        // Sunucu
+        val s403 = E.classify(com.movietrack.app.download.HttpException(403, "https://cdn.example.com/a.ts"))
+        assertEquals(ErrKind.SERVER, s403.kind); assertTrue(s403.message.contains("süresi"))
+        assertTrue(E.message(com.movietrack.app.download.HttpException(429, "u")).contains("yoğun"))
+        // Depolama
+        assertEquals(ErrKind.STORAGE, E.classify(java.io.IOException("write failed: ENOSPC (No space left on device)")).kind)
+        // Kaynak (bizim açıklayıcı mesajımız olduğu gibi)
+        assertEquals("Bu yayın DRM ile korunuyor; indirilemez.", E.message(com.movietrack.app.download.UserError("Bu yayın DRM ile korunuyor; indirilemez.")))
+        // Tanımadığımız her şey: sistem hatası, iç ayrıntı ekranda yok ama raporda var
+        val sys = E.classify(IllegalStateException("Failed to stop the muxer at /data/user/0/com.indirici.app/files/streams/7"))
+        assertEquals(ErrKind.SYSTEM, sys.kind)
+        assertEquals(E.SYSTEM_MESSAGE, sys.message)
+        assertFalse(sys.message.contains("/data")); assertFalse(sys.message.contains("muxer"))
+        assertTrue(sys.technical.contains("IllegalStateException"))
+        val npe = E.classify(NullPointerException("Attempt to invoke virtual method on a null object reference"))
+        assertEquals(E.SYSTEM_MESSAGE, npe.message)
     }
 }

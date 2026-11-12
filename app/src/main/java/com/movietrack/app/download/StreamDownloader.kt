@@ -198,11 +198,12 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 report.append("birleştirme (yalnız ses):\n").append(r.notes).append('\n')
                 out.publish(app)
                 e.outputUri = out.encode(); e.fileName = name; merged = true
-                if (r.audioTracks == 0) e.error = "Uyarı: kaynakta ses bulunamadı.\n" + diag()
+                if (r.audioTracks == 0) { e.error = "Uyarı: kaynakta ses bulunamadı."; report.append(diag()).append('\n') }
             } catch (t: Throwable) {
                 out.delete(app)
                 if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
-                e.error = "Uyarı: ses dosyası yazılamadı (${t.message}); akış ayrı kaydedildi."
+                e.error = "Uyarı: ses dosyası oluşturulamadı; ses ayrı dosya olarak kaydedildi."
+                report.append("ses dosyası hatası: ${Errors.technical(t)}\n")
             }
         } else if (meta["mode"] != "separate") {
             val name = "$base.mp4"
@@ -224,11 +225,16 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 e.outputUri = out.encode()
                 e.fileName = name
                 merged = true
-                if (audioTracks == 0) e.error = "Uyarı: dosyada ses yok ya da eksik. Kaynak yalnızca görüntü içeriyor olabilir; sayfadaki ana listeyi (çoklu kalite) seçip tekrar deneyin.\n" + diag()
+                if (audioTracks == 0) {
+                    e.error = "Uyarı: dosyada ses yok ya da eksik. Sayfadaki ana listeyi (çoklu kalite) seçip yeniden deneyin."
+                    report.append(diag()).append('\n')
+                }
             } catch (t: Throwable) {
                 out.delete(app)
                 if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
-                e.error = "Uyarı: MP4'e birleştirilemedi (${t.message}); dosyalar ayrı kaydedildi."
+                e.error = if (Errors.classify(t).kind == Errors.Kind.STORAGE) "Uyarı: ${Errors.message(t)} Görüntü ve ses ayrı dosyalar olarak kaydedildi."
+                    else "Uyarı: tek MP4 oluşturulamadı; görüntü ve ses ayrı dosyalar olarak kaydedildi."
+                report.append("birleştirme hatası: ${Errors.technical(t)}\n")
             }
             // İstenirse ses ayrıca .m4a olarak da (müzik çalarlar, arka planda dinleme için)
             if (merged && meta["alsoAudio"] == "1") {
@@ -283,7 +289,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             report.append("ses ölçümü: $level\n")
             // Ölçüm sessiz diyorsa kartta uyarı çıksın (dokununca ayrıntı ve rapor)
             if (e.error == null && !audioOnly && (level.contains("SESSİZ") || level.startsWith("ses izi yok") || level.startsWith("ses izinde örnek yok") || level.startsWith("ses çözülemedi")))
-                e.error = "Uyarı: çıktıda ses duyulmuyor ($level). Ayrıntıdaki tanı raporunu kopyalayıp gönderin."
+                e.error = "Uyarı: çıktıda ses duyulmuyor. Dosyalar menüsünden tanı raporunu kopyalayıp gönderin."
         }
         e.meta = KV.encode(KV.decode(e.meta) + ("diag" to report.toString()))
         e.totalBytes = e.downloadedBytes
@@ -301,15 +307,15 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             var u = url
             var text = fetch(u)
             if (Hls.isMaster(text)) {
-                u = Hls.parseMaster(text, u).variants.firstOrNull()?.url ?: error("Varyant bulunamadı")
+                u = Hls.parseMaster(text, u).variants.firstOrNull()?.url ?: userError("Listede indirilebilir kalite bulunamadı.")
                 text = fetch(u)
             }
             val m = Hls.parseMedia(text, u)
-            if (m.drm) error("Bu yayın DRM ile korunuyor; indirilemez.")
+            if (m.drm) userError("Bu yayın DRM ile korunuyor; indirilemez.")
             return m
         }
         val main = load(meta["variant"] ?: e.url)
-        if (main.live) error("Canlı yayınlar bu sürümde desteklenmiyor.")
+        if (main.live) userError("Canlı yayınlar bu sürümde desteklenmiyor.")
         plans += Plan("main", meta["muxedLang"] ?: "", "", main.segments, main.segments.firstOrNull()?.map != null)
         for (line in (meta["audios"] ?: "").lines().filter { it.isNotBlank() }) {
             val p = line.split('|')
@@ -331,7 +337,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             }
         }
         val plans = ArrayList<Plan>()
-        val video = meta["variant"]?.takeIf { it.startsWith("http") } ?: error("YouTube görüntü adresi yok")
+        val video = meta["variant"]?.takeIf { it.startsWith("http") } ?: userError("YouTube görüntü adresi alınamadı; videoyu yeniden açıp deneyin.")
         plans += Plan("main", "", "", ranges(video), fmp4 = true, raw = true)
         for (line in (meta["audios"] ?: "").lines().filter { it.isNotBlank() }) {
             val p = line.split('|')
@@ -344,7 +350,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
 
     private suspend fun planDash(): List<Plan> {
         val mpd = Dash.parse(Http.text(e, e.url), e.url)
-        if (mpd.drm) error("Bu DASH yayını DRM ile korunuyor; indirilemez.")
+        if (mpd.drm) userError("Bu yayın DRM ile korunuyor; indirilemez.")
         val video = mpd.reps.firstOrNull { it.id == meta["variant"] } ?: mpd.reps.firstOrNull { it.kind == "video" }
         val plans = ArrayList<Plan>()
         video?.let { plans += Plan("main", "", "", it.segments, true) }
@@ -352,13 +358,13 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             val p = line.split('|')
             mpd.reps.firstOrNull { it.id == p[0] && it.kind == "audio" }?.let { plans += Plan(if (plans.isEmpty()) "main" else "audio", it.lang, it.label, it.segments, true) }
         }
-        if (plans.isEmpty()) error("İndirilecek temsil bulunamadı")
+        if (plans.isEmpty()) userError("Listede indirilebilir kalite bulunamadı.")
         return plans
     }
 
     private suspend fun decrypt(seg: Hls.Segment, data: ByteArray): ByteArray {
         val k = seg.key ?: return data
-        if (k.method != "AES-128") error("Desteklenmeyen şifreleme: ${k.method}")
+        if (k.method != "AES-128") userError("Bu yayının şifreleme türü desteklenmiyor.")
         val key = keyCache[k.url] ?: Http.bytes(e, k.url).also { keyCache[k.url] = it }
         val iv = ByteArray(16)
         if (k.iv != null) {

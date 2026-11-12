@@ -80,7 +80,7 @@ object Http {
     private suspend fun textDirect(e: DownloadEntity?, url: String): String = retry(2) {
         val req = request(e, url)
         val res = try { textClient.newCall(req).execute() } catch (t: java.io.InterruptedIOException) {
-            throw IOException("Sunucu yanıt vermedi (zaman aşımı): ${java.net.URI(url).host}")
+            throw java.net.SocketTimeoutException("Sunucu yanıt vermedi (zaman aşımı)")
         }
         if (!res.isSuccessful) { val c = res.code; res.close(); throw HttpException(c, url) }
         res.use { it.body!!.string() }

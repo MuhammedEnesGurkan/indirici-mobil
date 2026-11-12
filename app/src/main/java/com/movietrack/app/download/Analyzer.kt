@@ -48,7 +48,7 @@ object Analyzer {
     private suspend fun hls(url: String, referer: String?, ua: String?, text0: String?): Info {
         val e = req(url, referer, ua)
         val text = text0?.takeIf { it.trimStart().startsWith("#EXTM3U") } ?: Http.text(e, url)
-        if (!text.trimStart().startsWith("#EXTM3U")) error("Geçerli bir m3u8 değil")
+        if (!text.trimStart().startsWith("#EXTM3U")) userError("Bağlantı bir video listesi (m3u8) değil.")
         if (!Hls.isMaster(text)) {
             val m = Hls.parseMedia(text, url)
             val h = Regex("(2160|1440|1080|720|576|480|360|240)p?").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 0
