@@ -228,7 +228,10 @@ class JobContext(
 
     @Synchronized
     fun emit() {
-        val speed = if (samples.size >= 2) {
+        // Hız yalnızca son 3 sn'de veri indiyse gösterilir: indirme bitince (birleştirmede) eski hız ekranda
+        // takılı kalıyor, birleştirme o hızda yapılıyormuş gibi görünüyordu
+        val fresh = samples.isNotEmpty() && System.currentTimeMillis() - samples.last().first < 3000 && phase != "Birleştiriliyor"
+        val speed = if (fresh && samples.size >= 2) {
             val (t0, b0) = samples.first(); val (t1, b1) = samples.last()
             if (t1 > t0) (b1 - b0) * 1000 / (t1 - t0) else 0
         } else 0
