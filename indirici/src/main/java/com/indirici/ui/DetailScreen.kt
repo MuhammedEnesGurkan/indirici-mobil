@@ -185,7 +185,7 @@ fun DetailScreen(id: Long, onBack: () -> Unit) {
                     }
                 } else if (p != null && p.segTotal > 0) {
                     Column {
-                        Text("Parçalar · ${p.segDone} / ${p.segTotal}", style = MaterialTheme.typography.labelMedium, color = c.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+                        Text(if (s.kind == Kind.MERGING) metaLine(e, p) else "Parçalar · ${p.segDone} / ${p.segTotal}", style = MaterialTheme.typography.labelMedium, color = c.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
                         DownloadProgress(e, p)
                     }
                 } else DownloadProgress(e, p)

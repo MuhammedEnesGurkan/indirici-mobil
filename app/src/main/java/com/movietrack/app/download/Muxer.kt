@@ -45,7 +45,13 @@ object Muxer {
      */
     fun mux(inputs: List<Input>, out: FileDescriptor, durationHintUs: Long = 0, active: () -> Boolean = { true }, onProgress: (Float) -> Unit = {}): Result {
         val muxer = MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>, val video: Boolean) { var shift = 0L }
+        class Src(val ex: MediaExtractor, val map: Map<Int, Int>, val audio: Set<Int>, val video: Boolean) {
+            var shift = 0L
+            // Sıradaki örneğin iz numarası ve zamanı önbellekte: MediaExtractor ayrı bir süreçte çalışır, her
+            // sorgu süreçler arası çağrıdır. Örnek başına ~11 çağrı yerine ~5 (telefonda birleştirme 5 MB/sn idi)
+            var tr = -1; var st = 0L
+            fun peek() { tr = ex.sampleTrackIndex; st = if (tr >= 0) ex.sampleTime else 0L }
+        }
         val converters = HashMap<Int, AudioConverter>()
         val aacTracks = HashSet<Int>() // kaynak iz numarası (girdi başına ayrı Src olduğundan çakışma önemsiz)
         var adtsStripped = 0L
@@ -93,11 +99,12 @@ object Muxer {
             val info = MediaCodec.BufferInfo()
             // Örnek kaldı mı: sampleTime değil iz numarasına bakılır (AAC ön dolgusu yüzünden ilk ses
             // örneğinin zamanı negatif olabilir; negatif zamanlı kaynak hiç okunmadan atlanıyordu)
-            fun has(s: Src) = s.ex.sampleTrackIndex >= 0
+            srcs.forEach { it.peek() }
+            fun has(s: Src) = s.tr >= 0
             // Saat tabanı: ayrı ses izi bazen başka bir saatle gelir (ör. görüntü 1 sn'de, ses 10 saatte başlar).
             // Ana kaynağa 5 sn'den yakın başlayanlar ortak tabanı paylaşır (senkron korunur), uzak olan kendi
             // başlangıcına hizalanır; yoksa ses saatlerce sonraya yazılıp video sessiz kalıyordu (eklentiyle aynı kural)
-            val firsts = srcs.associateWith { if (has(it)) it.ex.sampleTime else Long.MAX_VALUE }
+            val firsts = srcs.associateWith { if (has(it)) it.st else Long.MAX_VALUE }
             val mainSrc = srcs.firstOrNull { it.video } ?: srcs.first()
             val mainFirst = firsts[mainSrc]!!.takeIf { it != Long.MAX_VALUE } ?: firsts.values.minOrNull() ?: 0L
             fun sameClock(f: Long) = f != Long.MAX_VALUE && kotlin.math.abs(f - mainFirst) < 5_000_000
@@ -114,16 +121,16 @@ object Muxer {
                 // Zamanı en küçük örneği seç (izleri iç içe yaz); tek kaynakta doğrudan o
                 var s: Src? = null
                 var best = Long.MAX_VALUE
-                for (c in srcs) if (has(c)) { val t = c.ex.sampleTime - c.shift; if (s == null || t < best) { s = c; best = t } }
+                for (c in srcs) if (has(c)) { val t = c.st - c.shift; if (s == null || t < best) { s = c; best = t } }
                 if (s == null) break
                 if ((++n and 255) == 0 && !active()) throw java.util.concurrent.CancellationException("Birleştirme durduruldu")
                 val ex = s.ex
                 val size = ex.readSampleData(buf, 0)
-                if (size < 0) { ex.advance(); continue }
-                val track = ex.sampleTrackIndex
+                if (size < 0) { ex.advance(); s.peek(); continue }
+                val track = s.tr
                 val dst = s.map[track]
                 if (dst != null) {
-                    var t = ex.sampleTime - s.shift + offset[dst]
+                    var t = s.st - s.shift + offset[dst]
                     val prev = last[dst]
                     // Kesintide zaman sıfırlanırsa (reklam/periyot) kaydır
                     if (prev != Long.MIN_VALUE && t < prev - 1_000_000) {
@@ -133,7 +140,8 @@ object Muxer {
                     }
                     if (track in s.audio && prev != Long.MIN_VALUE && t <= prev) t = prev + 1
                     if (t < 0) t = 0
-                    val flags = if (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                    // Ses örneklerinin hepsi anahtar karedir; bayrak yalnızca görüntü için sorulur
+                    val flags = if (track in s.audio || ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
                     val conv = converters[dst]
                     if (conv != null) {
                         conv.feed(buf, size, t) { b, inf -> muxer.writeSampleData(dst, b, inf) }
@@ -166,7 +174,7 @@ object Muxer {
                     }
                     if (durationUs > 0 && t - lastReport > 1_000_000) { lastReport = t; onProgress((t.toFloat() / durationUs).coerceIn(0f, 1f)) }
                 }
-                ex.advance()
+                ex.advance(); s.peek()
             }
             for ((d, c) in converters) c.finish { b, inf -> muxer.writeSampleData(d, b, inf) }
             muxer.stop()

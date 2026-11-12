@@ -153,6 +153,9 @@ fun metaLine(e: DownloadEntity, p: LiveProgress?): String {
             else listOf(Format.bytes(if (total > 0) total else bytes), Dates.short(e.finishedAt.takeIf { it > 0 } ?: e.createdAt)).joinToString(" · ")
         Kind.ERROR, Kind.EXPIRED -> listOfNotNull(e.error?.lineSequence()?.firstOrNull()?.take(60), sizePart(bytes, total)).joinToString(" · ")
         Kind.MERGING -> when (p?.phase) {
+            "Ses yeniden ekleniyor" -> "İlk birleştirmede ses eksik çıktı; videonun kendi sesiyle yeniden birleştiriliyor"
+            "Kaydediliyor" -> "İndirilenler klasörüne kaydediliyor"
+            "Ses ayrıca kaydediliyor" -> "Ses ayrıca kaydediliyor"
             "Altyazılar indiriliyor" -> if ((p?.segTotal ?: 0) > 0) "Altyazılar indiriliyor · ${p?.segDone}/${p?.segTotal}" else "Altyazılar indiriliyor"
             else -> "Ses ve görüntü tek dosyada birleştiriliyor"
         }

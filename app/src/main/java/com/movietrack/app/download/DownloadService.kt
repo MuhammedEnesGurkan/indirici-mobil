@@ -112,7 +112,27 @@ class DownloadService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // Ekran kapalıyken işlemci ve Wi-Fi uyumasın: yoksa indirme/birleştirme çok yavaşlıyor ya da sistem
+    // uygulamayı kapatıyor ve birleştirme baştan başlıyordu
+    private var wake: android.os.PowerManager.WakeLock? = null
+    private var wifi: android.net.wifi.WifiManager.WifiLock? = null
+    private fun acquireLocks() {
+        try {
+            if (wake == null) wake = (getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
+                .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "indirme:calisiyor").apply { setReferenceCounted(false) }
+            wake?.acquire(6 * 60 * 60 * 1000L)
+            if (wifi == null) wifi = (applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager)
+                .createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "indirme:wifi").apply { setReferenceCounted(false) }
+            wifi?.acquire()
+        } catch (_: Throwable) {}
+    }
+    private fun releaseLocks() {
+        try { wake?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
+        try { wifi?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        acquireLocks()
         ServiceCompat.startForeground(this, Notifications.ID_SERVICE, Notifications.progress(this),
             if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0)
         scope.coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
@@ -131,6 +151,7 @@ class DownloadService : Service() {
     }
 
     override fun onDestroy() {
+        releaseLocks()
         scope.cancel()
         super.onDestroy()
     }
