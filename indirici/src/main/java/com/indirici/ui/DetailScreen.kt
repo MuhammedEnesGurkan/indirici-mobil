@@ -211,6 +211,14 @@ fun DetailScreen(id: Long, onBack: () -> Unit) {
                 InfoRow("Bağlantı", e.url, copy = { copyText(ctx, e.url) })
                 InfoRow("Kayıt yeri", OutputStore.displayFolder(KV.decode(e.meta)["folder"] ?: ""))
                 InfoRow("Başladı", Dates.short(e.createdAt))
+                if (e.status == Status.DONE) {
+                    val st = KV.decode(e.meta)
+                    val bytes = e.downloadedBytes.coerceAtLeast(e.totalBytes)
+                    if (e.finishedAt > e.createdAt) InfoRow("Toplam süre", dur(e.finishedAt - e.createdAt) + " (duraklatmalar dahil)")
+                    st["st.dl"]?.toLongOrNull()?.takeIf { it > 0 }?.let { ms -> InfoRow("İndirme", "${dur(ms)} · ortalama ${speed(bytes * 1000 / ms)}") }
+                    st["st.merge"]?.toLongOrNull()?.takeIf { it > 0 }?.let { ms -> InfoRow("Birleştirme", "${dur(ms)} · ${speed(bytes * 1000 / ms)}") }
+                    if (bytes > 0) InfoRow("Boyut", Format.bytes(bytes))
+                }
                 KV.decode(e.meta)["diag"]?.let { diag ->
                     Row(Modifier.fillMaxWidth().background(c.surfaceContainerLow).padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Tanı raporu", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, modifier = Modifier.weight(1f))
@@ -298,3 +306,13 @@ private fun describeTracks(ctx: android.content.Context, e: com.movietrack.app.d
         }.joinToString(" · ").ifEmpty { "iz bulunamadı" }
     } finally { ex.release() }
 } catch (t: Throwable) { "okunamadı" }
+
+/** "1 sa 12 dk", "18 dk 20 sn", "45 sn" */
+private fun dur(ms: Long): String {
+    val sec = ms / 1000
+    return when {
+        sec >= 3600 -> "${sec / 3600} sa ${(sec % 3600) / 60} dk"
+        sec >= 60 -> "${sec / 60} dk ${sec % 60} sn"
+        else -> "$sec sn"
+    }
+}

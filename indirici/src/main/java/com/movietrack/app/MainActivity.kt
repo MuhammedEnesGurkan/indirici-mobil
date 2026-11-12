@@ -204,7 +204,7 @@ class MainActivity : ComponentActivity() {
                 AnimatedContent(tab, Modifier.fillMaxSize().padding(pad), transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "tab") { t ->
                     when (t) {
                         "browser" -> Box(Modifier.statusBarsPadding()) { BrowserScreen(snack, onDownload = newDownload) }
-                        "files" -> FilesScreen(onNew = newDownload, onOpenDownloads = { tabState.value = "downloads" })
+                        "files" -> FilesScreen(onNew = newDownload, onOpenDownloads = { tabState.value = "downloads" }, onOpenDetail = { detail = it })
                         "settings" -> SettingsScreen(onOpenQueue = { queue = true })
                         else -> DownloadsScreen(snack, onNew = newDownload, onOpenDetail = { detail = it }, onOpenBrowser = { tabState.value = "browser" }, onOpenQueue = { queue = true })
                     }

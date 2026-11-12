@@ -136,8 +136,20 @@ class DownloadManager(private val app: App) {
         }
     }
 
+    /** İstatistik: bu çalışmada geçen etkin süre indirme/birleştirme olarak meta'ya eklenir (duraklatmalar boyunca birikir). */
+    private fun addStats(e: DownloadEntity, ctx: JobContext, runStart: Long) {
+        val now = System.currentTimeMillis()
+        val mergeAt = ctx.mergeStartedAt
+        val dl = (if (mergeAt > 0) mergeAt else now) - runStart
+        val mg = if (mergeAt > 0) now - mergeAt else 0L
+        val m = KV.decode(e.meta)
+        fun add(k: String, v: Long) = ((m[k]?.toLongOrNull() ?: 0L) + v.coerceAtLeast(0)).toString()
+        e.meta = KV.encode(m + mapOf("st.dl" to add("st.dl", dl), "st.merge" to add("st.merge", mg)))
+    }
+
     private suspend fun run(e: DownloadEntity) {
         val ctx = JobContext(e, dao, scope) { p -> _live.update { it + (e.id to p) } }
+        val runStart = System.currentTimeMillis()
         try {
             when (e.type) {
                 "hls", "dash", "youtube" -> StreamDownloader(app, ctx).run()
@@ -146,13 +158,15 @@ class DownloadManager(private val app: App) {
             e.status = Status.DONE
             e.finishedAt = System.currentTimeMillis()
             e.downloadedBytes = maxOf(e.downloadedBytes, e.totalBytes)
+            addStats(e, ctx, runStart)
             dao.update(e)
             Notifications.finished(app, e, null)
         } catch (c: CancellationException) {
-            withContext(NonCancellable) { ctx.saveNow() }
+            withContext(NonCancellable) { addStats(e, ctx, runStart); ctx.saveNow() }
             throw c
         } catch (t: Throwable) {
             withContext(NonCancellable) {
+                addStats(e, ctx, runStart)
                 e.status = Status.ERROR
                 // Ekrana yalnızca kısa, açıklayıcı mesaj; teknik ayrıntı tanı raporuna
                 val info = Errors.classify(t)
@@ -209,6 +223,8 @@ class JobContext(
     private val publish: (LiveProgress) -> Unit,
 ) {
     @Volatile var phase = "İndiriliyor"
+    /** Birleştirmenin başladığı an (0: başlamadı); istatistik için */
+    @Volatile var mergeStartedAt = 0L
     @Volatile var segDone = 0
     @Volatile var segTotal = 0
     @Volatile var partsProvider: (() -> String)? = null

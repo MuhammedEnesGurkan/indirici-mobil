@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.MoreVert
@@ -81,7 +82,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit) {
+fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit, onOpenDetail: (Long) -> Unit = {}) {
     val ui = App.instance.ui
     val v by ui.version.collectAsState()
     v.hashCode()
@@ -166,12 +167,12 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit) {
             }
         }
     }
-    actions?.let { e -> FileActions(e, onDismiss = { actions = null }, onNew = onNew) }
+    actions?.let { e -> FileActions(e, onDismiss = { actions = null }, onNew = onNew, onDetail = { actions = null; onOpenDetail(e.id) }) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (DownloadRequest) -> Unit) {
+private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (DownloadRequest) -> Unit, onDetail: () -> Unit = {}) {
     val ctx = LocalContext.current
     val c = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
@@ -189,6 +190,7 @@ private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (Downlo
             HorizontalDivider(Modifier.padding(horizontal = 24.dp), color = c.outlineVariant)
             ActionRow(Icons.Rounded.PlayCircle, "Aç") { onDismiss(); openFile(ctx, e) }
             ActionRow(Icons.Rounded.Share, "Paylaş") { onDismiss(); Open.share(ctx, e) }
+            ActionRow(Icons.Rounded.Info, "Ayrıntılar") { onDetail() }
             ActionRow(Icons.Rounded.Edit, "Yeniden adlandır") { rename = true }
             ActionRow(Icons.Rounded.ContentCopy, "Bağlantıyı kopyala") { onDismiss(); copyText(ctx, e.url) }
             com.movietrack.app.util.KV.decode(e.meta)["diag"]?.let { diag ->

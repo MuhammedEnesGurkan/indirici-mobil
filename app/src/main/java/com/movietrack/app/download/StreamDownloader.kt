@@ -118,6 +118,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
 
         // 2) Akış dosyaları
         ctx.phase = "Birleştiriliyor"
+        ctx.mergeStartedAt = System.currentTimeMillis()
         ctx.segTotal = 1000; ctx.segDone = 0
         ctx.emit()
         e.status = com.movietrack.app.data.Status.MERGING

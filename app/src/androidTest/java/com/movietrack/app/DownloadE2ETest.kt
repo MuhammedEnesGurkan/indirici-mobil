@@ -180,6 +180,9 @@ class DownloadE2ETest {
     private fun assertPlayable(e: DownloadEntity, what: String, wantAudio: Boolean = true) {
         val p = probe(output(e))
         assertEquals("$what: görüntü izi (uyarı: ${e.error})", 1, p.video)
+        // İstatistik: indirme süresi kaydedilmiş olmalı (detayda süre ve ortalama hız için)
+        val st = com.movietrack.app.util.KV.decode(e.meta)
+        assertTrue("$what: istatistik yok: ${st.keys}", (st["st.dl"]?.toLongOrNull() ?: -1) >= 0 && st.containsKey("st.merge"))
         if (wantAudio) {
             assertTrue("$what: ses izi yok (${p}, uyarı: ${e.error})", p.audio >= 1)
             // Ses tüm video boyunca sürmeli (yalnızca ilk parçası değil)
