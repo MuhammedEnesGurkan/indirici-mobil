@@ -89,6 +89,13 @@ class DownloadE2ETest {
                     }
                     return ok(asset("ts/$n") ?: return MockResponse().setResponseCode(404), if (n.endsWith(".m3u8")) "application/vnd.apple.mpegurl" else "video/mp2t", request)
                 }
+                // İlk parçası çok yavaş gelen büyük dosya (dinamik bölme testi)
+                if (path == "slowfirst/big.bin") {
+                    val r = ok(asset("big/b0.ts")!!, "application/octet-stream", request)
+                    val rg = request.getHeader("Range")?.let { Regex("bytes=(\\d+)-(\\d*)").find(it) }
+                    if (rg != null && rg.groupValues[1] == "0" && rg.groupValues[2] != "0") r.throttleBody(64 * 1024, 500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    return r
+                }
                 // gizlenmiş liste adı: master.txt
                 if (path == "hidden/master.txt") {
                     val t = String(asset("ts/master.m3u8")!!).replace("\nindex.m3u8", "\n/ts/index.m3u8").replace("../split/", "/split/")
@@ -381,6 +388,26 @@ class DownloadE2ETest {
         val bytes = app.contentResolver.openInputStream(output(e))!!.use { it.readBytes() }
         assertTrue("dosya aynı değil", bytes.contentEquals(asset("direct.mp4")!!))
         assertPlayable(e, "Doğrudan MP4")
+    }
+
+    /** Bir bağlantı yavaş kalınca boşalan bağlantılar onun kalanını bölüp devralmalı; dosya bayt bayt aynı olmalı. */
+    @Test
+    fun idleConnectionsStealFromSlowPart() {
+        val prev = app.settings.parts
+        app.settings.parts = 4
+        try {
+            val u = url("slowfirst/big.bin")
+            val t0 = System.currentTimeMillis()
+            val e = download(analyze(u), u, "slowfirst")
+            val took = System.currentTimeMillis() - t0
+            val bytes = app.contentResolver.openInputStream(output(e))!!.use { it.readBytes() }
+            assertTrue("dosya aynı değil", bytes.contentEquals(asset("big/b0.ts")!!))
+            val n = e.parts.split(';').count { it.isNotBlank() }
+            android.util.Log.i("DynSplit", "parça sayısı=$n süre=${took} ms")
+            assertTrue("bölme olmadı: $n parça", n > 4)
+            // Bölme olmasa yavaş parça (~1,7 MB, 128 KB/sn) tek başına ~13 sn sürerdi
+            assertTrue("yavaş: $took ms", took < 11_000)
+        } finally { app.settings.parts = prev }
     }
 
     @Test

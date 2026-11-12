@@ -19,12 +19,12 @@ import kotlin.coroutines.coroutineContext
  * Parçaların ilerlemesi kaydedilir; uygulama kapansa bile kaldığı yerden devam eder.
  */
 class DirectDownloader(private val app: App, private val ctx: JobContext) {
-    private class Part(val start: Long, val end: Long, @Volatile var done: Long) {
+    private class Part(val start: Long, @Volatile var end: Long, @Volatile var done: Long) {
         val size get() = if (end < 0) -1 else end - start + 1
         val finished get() = end >= 0 && done >= size
     }
 
-    private fun encode(parts: List<Part>) = parts.joinToString(";") { "${it.start},${it.end},${it.done}" }
+    private fun encode(parts: List<Part>) = synchronized(parts) { parts.sortedBy { it.start }.joinToString(";") { "${it.start},${it.end},${it.done}" } }
     private fun decode(s: String) = s.split(';').filter { it.isNotBlank() }.map { val p = it.split(','); Part(p[0].toLong(), p[1].toLong(), p[2].toLong()) }
 
     suspend fun run() {
@@ -72,7 +72,28 @@ class DirectDownloader(private val app: App, private val ctx: JobContext) {
                     streamPart(ch, parts[0])
                     e.totalBytes = parts[0].done
                 } else coroutineScope {
-                    parts.filter { !it.finished }.map { p -> async { Http.retry(8) { streamPart(ch, p) } } }.awaitAll()
+                    // Dinamik bölme (IDM'deki gibi): boşalan bağlantı, kalan en büyük parçayı ikiye bölüp yarısını
+                    // devralır. Böylece hızlı parçalar bitince bağlantılar boşta kalmaz, yavaş kalan parça
+                    // tek bağlantıyla sürünmez.
+                    val live = java.util.Collections.synchronizedList(parts.toMutableList())
+                    parts = live
+                    val claimed = HashSet<Part>()
+                    fun next(): Part? = synchronized(live) {
+                        live.firstOrNull { !it.finished && it !in claimed }?.let { claimed += it; return@synchronized it }
+                        val victim = live.filter { it in claimed && !it.finished }.maxByOrNull { it.end - (it.start + it.done) } ?: return@synchronized null
+                        val pos = victim.start + victim.done
+                        val remaining = victim.end - pos + 1
+                        // Yarısı, sürmekte olan tek okumadan (128 KB) çok büyük olmalı ki bölme noktası aşılmasın
+                        if (remaining < MIN_SPLIT) return@synchronized null
+                        val mid = pos + remaining / 2
+                        val np = Part(mid, victim.end, 0)
+                        victim.end = mid - 1
+                        live += np; claimed += np
+                        np
+                    }
+                    (0 until app.settings.parts.coerceIn(1, 16)).map {
+                        async { while (true) { val p = next() ?: break; Http.retry(8) { streamPart(ch, p) } } }
+                    }.awaitAll()
                 }
                 ch.force(true)
             }
@@ -80,6 +101,8 @@ class DirectDownloader(private val app: App, private val ctx: JobContext) {
         e.parts = encode(parts)
         out.publish(app)
     }
+
+    private companion object { const val MIN_SPLIT = 1L shl 20 }
 
     private suspend fun streamPart(ch: FileChannel, p: Part) {
         val e = ctx.e
