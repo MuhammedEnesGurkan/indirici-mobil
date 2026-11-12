@@ -56,6 +56,8 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         val workers = app.settings.parts.coerceIn(2, 16)
         val allowed = AtomicInteger(workers)
         val lastThrottle = java.util.concurrent.atomic.AtomicLong(0)
+        val throttles = AtomicInteger(0)
+        val minAllowed = AtomicInteger(workers)
         suspend fun fetchSegment(seg: Hls.Segment): ByteArray {
             var attempt = 0
             while (true) {
@@ -63,10 +65,19 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 catch (x: HttpException) {
                     if ((x.code != 429 && x.code != 503) || attempt >= 10) throw x
                     attempt++
-                    val n = maxOf(1, allowed.get() / 2)
-                    allowed.set(n); lastThrottle.set(System.currentTimeMillis())
-                    ctx.phase = "Sunucu yavaşlattı · $n bağlantı"; ctx.emit()
-                    kotlinx.coroutines.delay(minOf(60_000L, 4_000L * attempt))
+                    // Aynı anda gelen retler tek olay sayılır (yoksa 8 bağlantı bir anda 1'e iniyordu);
+                    // en az 2 bağlantı kalır
+                    val now = System.currentTimeMillis()
+                    throttles.incrementAndGet()
+                    synchronized(allowed) {
+                        if (now - lastThrottle.get() > 5_000) {
+                            val n = maxOf(2, allowed.get() * 2 / 3)
+                            allowed.set(n); lastThrottle.set(now)
+                            if (n < minAllowed.get()) minAllowed.set(n)
+                        }
+                    }
+                    ctx.phase = "Sunucu yavaşlattı · ${allowed.get()} bağlantı"; ctx.emit()
+                    kotlinx.coroutines.delay(minOf(20_000L, 2_000L * attempt))
                 }
             }
         }
@@ -88,9 +99,10 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                         tmp.renameTo(f)
                         ctx.segDone++
                         if (ctx.segDone > 2 && e.type != "youtube") e.totalBytes = e.downloadedBytes * ctx.segTotal / ctx.segDone
-                        // 30 sn sorunsuz: bir bağlantı geri
-                        if (allowed.get() < workers && System.currentTimeMillis() - lastThrottle.get() > 30_000) {
-                            if (allowed.incrementAndGet() >= workers) { ctx.phase = "İndiriliyor"; ctx.emit() }
+                        // 8 sn sorunsuz: bir bağlantı geri
+                        if (allowed.get() < workers && System.currentTimeMillis() - lastThrottle.get() > 8_000) {
+                            val n = allowed.incrementAndGet()
+                            ctx.phase = if (n >= workers) "İndiriliyor" else "Sunucu yavaşlattı · $n bağlantı"; ctx.emit()
                             lastThrottle.set(System.currentTimeMillis())
                         }
                     }
@@ -114,6 +126,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         val streamFiles = plans.mapIndexed { si, p -> concat(si, p, skipAds) }
         val concatMs = (System.nanoTime() - t0) / 1_000_000
         val streamBytes = streamFiles.sumOf { it.length() }
+        val throttleNote = "indirme: $workers bağlantı, sunucu ${throttles.get()} kez 'çok fazla istek' dedi, en az ${minAllowed.get()} bağlantıya inildi\n"
         val timings = StringBuilder("hız: parça birleştirme ${speedOf(streamBytes, concatMs)}")
 
         // 3) Çıktı
@@ -281,7 +294,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
             }
         }
         e.extraOutputs = extras.joinToString("\n")
-        report.append(timings).append('\n')
+        report.append(throttleNote).append(timings).append('\n')
         // Tanı raporu: çıktıdaki izler ve sesin gerçekten duyulup duyulmadığı
         OutputFile.decode(e.outputUri)?.uri?.let { u ->
             report.append("çıktı ${e.fileName}: ${Diag.tracks { ex -> ex.setDataSource(app, u, null) }}\n")

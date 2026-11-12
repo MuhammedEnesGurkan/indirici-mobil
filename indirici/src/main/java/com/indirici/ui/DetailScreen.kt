@@ -170,6 +170,7 @@ fun DetailScreen(id: Long, onBack: () -> Unit) {
                     Column(horizontalAlignment = Alignment.End) {
                         Text(p?.speed?.takeIf { it > 0 }?.let { speed(it) } ?: "—", style = MaterialTheme.typography.titleMedium)
                         Text(p?.etaSec?.takeIf { it > 0 }?.let { eta(it) } ?: s.label.lowercase(), style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
+                        p?.phase?.takeIf { it.startsWith("Sunucu yavaşlattı") }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant) }
                     }
                 }
                 Text(if (total > 0) "${Format.bytes(bytes)} / ${Format.bytes(total)}" else Format.bytes(bytes), style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant)

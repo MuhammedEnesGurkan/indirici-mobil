@@ -163,6 +163,7 @@ fun metaLine(e: DownloadEntity, p: LiveProgress?): String {
             sizePart(bytes, total),
             p?.speed?.takeIf { it > 0 && s == Kind.DOWNLOADING }?.let { speed(it) },
             p?.etaSec?.takeIf { it > 0 && s == Kind.DOWNLOADING }?.let { eta(it) },
+            p?.phase?.takeIf { it.startsWith("Sunucu yavaşlattı") },
             if (s == Kind.PAUSED) "kaldığı yerden sürer" else null,
             if (s == Kind.NETWORK) "bağlantı gelince devam eder" else null,
         ).joinToString(" · ")
