@@ -173,7 +173,9 @@ class DownloadManager(private val app: App) {
                 e.error = info.message
                 val m = KV.decode(e.meta)
                 val prev = m["diag"]?.let { it + "\n" } ?: ""
-                e.meta = KV.encode(m + ("diag" to prev + "hata (${info.kind.name.lowercase()}): ${info.technical}"))
+                // Yeniden denemelerde rapor şişmesin: en yeni ~24 KB kalır
+                val entry = "hata (${info.kind.name.lowercase()}) ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())}: ${info.technical}\n${Errors.stack(t)}"
+                e.meta = KV.encode(m + ("diag" to (prev + entry).takeLast(24_000)))
                 ctx.saveNow()
                 Notifications.finished(app, e, e.error)
             }

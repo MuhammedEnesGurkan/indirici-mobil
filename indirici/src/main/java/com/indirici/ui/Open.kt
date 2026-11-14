@@ -85,3 +85,40 @@ fun copyText(ctx: Context, text: String) {
     com.movietrack.app.App.instance.settings.lastClipboard = text
     Toast.makeText(ctx, "Kopyalandı", Toast.LENGTH_SHORT).show()
 }
+
+/**
+ * "Ayrıntıyı kopyala" / "Tanı raporunu kopyala" için tam rapor: ekrandaki kısa mesajın yanında
+ * sürüm ve cihaz, indirmenin durumu, adresler, ilerleme, parçalar ve motorun tanı kaydı (hata
+ * zinciri ve yığın izi dahil). Çerezler gizli kalsın diye rapora girmez.
+ */
+fun diagnosticReport(e: DownloadEntity): String {
+    val time = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+    fun at(ms: Long) = if (ms > 0) time.format(java.util.Date(ms)) else "-"
+    val meta = com.movietrack.app.util.KV.decode(e.meta)
+    val parts = e.parts.split(';').filter { it.isNotBlank() }
+    return buildString {
+        append("indirici ${com.movietrack.app.BuildConfig.VERSION_NAME} (${com.movietrack.app.BuildConfig.VERSION_CODE})")
+        append(" · Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
+        append(" · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n")
+        append("rapor: ${at(System.currentTimeMillis())}\n\n")
+        append("dosya: ${e.fileName}\n")
+        append("durum: ${e.status} · tür: ${e.type}${if (e.mime.isNotBlank()) " · ${e.mime}" else ""}\n")
+        append("mesaj: ${e.error ?: "-"}\n")
+        append("ilerleme: ${e.downloadedBytes} / ${e.totalBytes} bayt\n")
+        append("başladı: ${at(e.createdAt)} · bitti: ${at(e.finishedAt)}\n")
+        append("bağlantı: ${e.url}\n")
+        append("sayfa: ${e.pageUrl ?: "-"}\n")
+        append("referer: ${e.referer ?: "-"}\n")
+        append("user-agent: ${e.userAgent ?: "-"}\n")
+        append("çerez: ${if (e.cookies.isNullOrBlank()) "yok" else "var (rapora eklenmedi)"}\n")
+        append("seçimler: ${e.labels.ifBlank { "-" }}\n")
+        if (parts.isNotEmpty()) append("parçalar (${parts.size}): ${e.parts}\n")
+        if (e.extraOutputs.isNotBlank()) append("ek dosyalar: ${e.extraOutputs.lines().count { it.isNotBlank() }}\n")
+        meta.filterKeys { it != "diag" && !it.startsWith("inline:") }.takeIf { it.isNotEmpty() }?.let { m ->
+            append("ek bilgi: ${m.entries.joinToString(", ") { "${it.key}=${it.value.take(200)}" }}\n")
+        }
+        append("\n--- tanı kaydı ---\n")
+        append(meta["diag"]?.takeIf { it.isNotBlank() } ?: "(kayıt yok)")
+        append('\n')
+    }
+}

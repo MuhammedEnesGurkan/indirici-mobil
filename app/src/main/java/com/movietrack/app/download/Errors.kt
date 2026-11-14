@@ -77,6 +77,17 @@ object Errors {
         "${it.javaClass.simpleName}: ${it.message.orEmpty().take(160)}"
     }
 
+    /** Tanı raporu için yığın izi: zincirdeki her halkanın türü, tam mesajı ve ilk satırları */
+    fun stack(t: Throwable, framesPerCause: Int = 12): String = buildString {
+        chain(t).forEachIndexed { i, c ->
+            if (i > 0) append("neden: ")
+            append(c.javaClass.name).append(": ").append(c.message.orEmpty().take(600)).append('\n')
+            val frames = c.stackTrace
+            frames.take(framesPerCause).forEach { append("    at ").append(it).append('\n') }
+            if (frames.size > framesPerCause) append("    … ${frames.size - framesPerCause} satır daha\n")
+        }
+    }.trimEnd()
+
     /** Ekranda gösterilecek metin */
     fun message(t: Throwable) = classify(t).message
 }
