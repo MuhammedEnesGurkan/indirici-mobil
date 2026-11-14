@@ -82,7 +82,10 @@ class MainActivity : ComponentActivity() {
     private val clipboardUrl = MutableStateFlow<String?>(null)
     private var pasteOnFocus = false
     private val notifLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
+        // Android 8–9: depolama izni gelince klasördeki eski dosyalar listeye eklenir
+        if (r.values.any { it }) com.movietrack.app.download.LibraryScan.scanAsync(this)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

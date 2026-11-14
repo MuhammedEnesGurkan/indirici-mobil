@@ -43,6 +43,8 @@ class App : Application() {
         downloads = DownloadManager(this)
         com.indirici.sys.Scheduler.install(this)
         downloads.restore()
+        // Yeniden kurulumdan sonra klasörde kalan eski indirmeler listeye geri gelsin
+        com.movietrack.app.download.LibraryScan.autoOnce(this)
         com.indirici.sys.IndiriciWidget.watch(this)
     }
 
