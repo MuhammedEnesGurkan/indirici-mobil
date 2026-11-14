@@ -196,13 +196,16 @@ fun DetailScreen(id: Long, onBack: () -> Unit) {
                 Icon(Icons.Rounded.LinkOff, null, tint = c.onErrorContainer)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(e.error ?: "", style = MaterialTheme.typography.bodyMedium, color = c.onErrorContainer)
-                    TextButton(onClick = { copyText(ctx, e.error ?: "") }) { Text("Ayrıntıyı kopyala") }
+                    TextButton(onClick = { copyText(ctx, diagnosticReport(e)) }) { Text("Ayrıntıyı kopyala") }
                 }
             }
             if (s.kind == Kind.EXPIRED || s.kind == Kind.ERROR) Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.errorContainer).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(if (s.kind == Kind.EXPIRED) Icons.Rounded.LinkOff else s.icon, null, tint = c.onErrorContainer)
-                Text(if (s.kind == Kind.EXPIRED) "Sunucu bu bağlantıyı artık kabul etmiyor. Videonun sayfasını yeniden açıp yeni bağlantıyı ver; indirme %$pct'den devam eder."
-                    else (e.error ?: com.movietrack.app.download.Errors.SYSTEM_MESSAGE).let { m -> if (m.contains("kaldığı yerden")) m else "$m\nYeniden denersen kaldığı yerden devam eder." }, style = MaterialTheme.typography.bodyMedium, color = c.onErrorContainer)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (s.kind == Kind.EXPIRED) "Sunucu bu bağlantıyı artık kabul etmiyor. Videonun sayfasını yeniden açıp yeni bağlantıyı ver; indirme %$pct'den devam eder."
+                        else (e.error ?: com.movietrack.app.download.Errors.SYSTEM_MESSAGE).let { m -> if (m.contains("kaldığı yerden")) m else "$m\nYeniden denersen kaldığı yerden devam eder." }, style = MaterialTheme.typography.bodyMedium, color = c.onErrorContainer)
+                    TextButton(onClick = { copyText(ctx, diagnosticReport(e)) }) { Text("Ayrıntıyı kopyala") }
+                }
             }
 
             if (s.kind == Kind.DOWNLOADING || s.kind == Kind.CONNECTING) SpeedChart(samples.toList())
@@ -219,12 +222,11 @@ fun DetailScreen(id: Long, onBack: () -> Unit) {
                     st["st.merge"]?.toLongOrNull()?.takeIf { it > 0 }?.let { ms -> InfoRow("Birleştirme", "${dur(ms)} · ${speed(bytes * 1000 / ms)}") }
                     if (bytes > 0) InfoRow("Boyut", Format.bytes(bytes))
                 }
-                KV.decode(e.meta)["diag"]?.let { diag ->
+                KV.decode(e.meta)["diag"]?.let {
                     Row(Modifier.fillMaxWidth().background(c.surfaceContainerLow).padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Tanı raporu", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, modifier = Modifier.weight(1f))
                         TextButton(onClick = {
-                            copyText(ctx, "indirici ${com.movietrack.app.BuildConfig.VERSION_NAME} · Android ${android.os.Build.VERSION.RELEASE} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n" +
-                                "${e.fileName}\nsayfa: ${e.pageUrl ?: "-"}\nseçimler: ${e.labels}\n$diag")
+                            copyText(ctx, diagnosticReport(e))
                         }) { Text("Kopyala") }
                     }
                 }

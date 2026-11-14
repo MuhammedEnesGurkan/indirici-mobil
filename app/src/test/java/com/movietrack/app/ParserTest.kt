@@ -146,6 +146,10 @@ class ParserTest {
         assertEquals(E.SYSTEM_MESSAGE, sys.message)
         assertFalse(sys.message.contains("/data")); assertFalse(sys.message.contains("muxer"))
         assertTrue(sys.technical.contains("IllegalStateException"))
+        // Tanı raporu yığın izini ve neden zincirini taşır
+        val st = E.stack(RuntimeException("dış", java.io.IOException("iç neden")))
+        assertTrue(st.contains("java.lang.RuntimeException: dış")); assertTrue(st.contains("neden: java.io.IOException: iç neden"))
+        assertTrue(st.contains("    at "))
         val npe = E.classify(NullPointerException("Attempt to invoke virtual method on a null object reference"))
         assertEquals(E.SYSTEM_MESSAGE, npe.message)
     }

@@ -195,13 +195,7 @@ private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (Downlo
             ActionRow(Icons.Rounded.Info, "Ayrıntılar") { onDetail() }
             ActionRow(Icons.Rounded.Edit, "Yeniden adlandır") { rename = true }
             ActionRow(Icons.Rounded.ContentCopy, "Bağlantıyı kopyala") { onDismiss(); copyText(ctx, e.url) }
-            com.movietrack.app.util.KV.decode(e.meta)["diag"]?.let { diag ->
-                ActionRow(Icons.Rounded.ContentCopy, "Tanı raporunu kopyala") {
-                    onDismiss()
-                    copyText(ctx, "indirici ${com.movietrack.app.BuildConfig.VERSION_NAME} · Android ${android.os.Build.VERSION.RELEASE} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n" +
-                        "${e.fileName}\nsayfa: ${e.pageUrl ?: "-"}\nseçimler: ${e.labels}\n$diag")
-                }
-            }
+            ActionRow(Icons.Rounded.ContentCopy, "Tanı raporunu kopyala") { onDismiss(); copyText(ctx, diagnosticReport(e)) }
             ActionRow(Icons.Rounded.Replay, "Tekrar indir") { onDismiss(); onNew(DownloadRequest(e.url, referer = e.referer, pageTitle = e.title, userAgent = e.userAgent)) }
             ActionRow(Icons.Rounded.Delete, "Sil", tint = c.error) { confirm = true }
         }
