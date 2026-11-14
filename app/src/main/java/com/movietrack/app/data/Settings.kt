@@ -75,6 +75,15 @@ class Settings(context: Context) {
         get() = p.getString("lastClipboard", "") ?: ""
         set(v) { p.edit().putString("lastClipboard", v).apply() }
 
+    /** Oynatıcıda çift dokunma ve ileri/geri düğmelerinin sarma adımı (saniye) */
+    var seekStepSec: Int
+        get() = p.getInt("seekStepSec", 10)
+        set(v) { p.edit().putInt("seekStepSec", v).apply(); changed() }
+
+    /** Videoya özel altyazı gecikmesi (ms; artı: altyazı daha geç çıkar) */
+    fun subOffset(key: String): Long = p.getLong("subOff:$key", 0)
+    fun saveSubOffset(key: String, ms: Long) { p.edit().putLong("subOff:$key", ms).apply() }
+
     fun resumePosition(key: String): Long = p.getLong("pos:$key", 0)
     fun saveResumePosition(key: String, ms: Long) { p.edit().putLong("pos:$key", ms).apply() }
 }

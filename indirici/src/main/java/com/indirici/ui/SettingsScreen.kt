@@ -108,7 +108,7 @@ private fun Main(onOpen: (String) -> Unit) {
     val c = MaterialTheme.colorScheme
     val bar = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
     val groups = listOf(
-        Group("general", Icons.Rounded.Tune, "Genel", "Pano algılama"),
+        Group("general", Icons.Rounded.Tune, "Genel", "Pano algılama, oynatıcı"),
         Group("downloads", Icons.Rounded.Download, "İndirmeler", "Klasör, hız, aynı anda indirme, diller"),
         Group("queue", Icons.Rounded.Schedule, "Sıra ve zamanlayıcı", "Başlama sırası, saat aralığı, şarj"),
         Group("browser", Icons.Rounded.Public, "Tarayıcı", "Arama motoru, reklam engelleme, masaüstü sitesi"),
@@ -224,6 +224,18 @@ private fun GeneralPage() {
     val s = App.instance.settings
     Section("Pano") {
         SwitchItem("Panodaki bağlantıyı algıla", "Bir bağlantı kopyaladığında indirmeyi önerir", s.clipboardDetect) { s.clipboardDetect = it }
+    }
+    Section("Oynatıcı") {
+        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp)) {
+            Text("İleri/geri sarma adımı", style = MaterialTheme.typography.labelLarge)
+            Text("Çift dokunma ve ileri/geri düğmeleri bu kadar sarar; art arda dokununca toplanır", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val steps = com.movietrack.app.player.PlayerActivity.SEEK_STEPS
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                steps.forEachIndexed { i, sec ->
+                    SegmentedButton(selected = s.seekStepSec == sec, onClick = { s.seekStepSec = sec }, shape = SegmentedButtonDefaults.itemShape(i, steps.size)) { Text("$sec sn") }
+                }
+            }
+        }
     }
 }
 
