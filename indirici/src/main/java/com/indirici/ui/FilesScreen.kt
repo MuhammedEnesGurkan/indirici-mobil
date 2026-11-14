@@ -39,6 +39,9 @@ import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.FileOpen
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.ViewList
@@ -104,25 +107,35 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit, o
     var needsAccess by remember { mutableStateOf(LibraryScan.needsAccess(ctx)) }
     var hideAccess by remember { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
+    var finder by remember { mutableStateOf(false) }
+    var folders by remember { mutableStateOf(LibraryScan.scanFolders(ctx)) }
+    val scanDone: (Int) -> Unit = { n ->
+        scanning = false
+        needsAccess = LibraryScan.needsAccess(ctx)
+        folders = LibraryScan.scanFolders(ctx)
+        android.widget.Toast.makeText(ctx, if (n > 0) "$n eski dosya listeye eklendi" else "Listede olmayan dosya bulunamadı", android.widget.Toast.LENGTH_SHORT).show()
+    }
     fun rescan() {
         if (scanning) return
         scanning = true
-        LibraryScan.scanAsync(ctx) { n ->
-            scanning = false
-            needsAccess = LibraryScan.needsAccess(ctx)
-            android.widget.Toast.makeText(ctx, if (n > 0) "$n eski dosya listeye eklendi" else "Klasörde listede olmayan dosya bulunamadı", android.widget.Toast.LENGTH_SHORT).show()
-        }
+        LibraryScan.scanAsync(ctx, scanDone)
     }
     val askMedia = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) { r ->
         if (r.values.any { it }) rescan()
-        else android.widget.Toast.makeText(ctx, "İzin verilmedi. Klasörü seçerek de erişim verebilirsin.", android.widget.Toast.LENGTH_LONG).show()
+        else android.widget.Toast.makeText(ctx, "İzin verilmedi. Yalnızca bir klasöre ya da seçtiğin dosyalara da izin verebilirsin.", android.widget.Toast.LENGTH_LONG).show()
     }
+    // Yalnızca bu klasör: indirme klasörünü değiştirmez, yalnızca taramaya eklenir
     val pickFolder = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
-        try { ctx.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (_: Exception) {}
-        // Seçilen klasör hem tarama hem de yeni indirmelerin yeri olur (aynı klasör: davranış değişmez)
-        App.instance.settings.folderUri = uri.toString()
+        LibraryScan.addScanFolder(ctx, uri)
+        folders = LibraryScan.scanFolders(ctx)
         rescan()
+    }
+    // Yalnızca seçilen dosyalar
+    val pickFiles = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty() || scanning) return@rememberLauncherForActivityResult
+        scanning = true
+        LibraryScan.importPickedAsync(ctx, uris, scanDone)
     }
     // Eski kurulumdan kalan dosyalar artık bu uygulamanın değil: Android 11+ silmek için sistemin onayını ister
     var pendingDelete by remember { mutableStateOf<DownloadEntity?>(null) }
@@ -148,8 +161,8 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit, o
         bottomBar = { MiniPlayerBar() },
         topBar = {
             LargeTopAppBar(title = { Text("Dosyalar") }, scrollBehavior = bar, actions = {
-                IconButton(onClick = { if (needsAccess) askMedia.launch(LibraryScan.mediaPermissions()) else rescan() }, enabled = !scanning) {
-                    Icon(Icons.Rounded.Refresh, "Klasörü tara: listede olmayan dosyaları ekle")
+                IconButton(onClick = { finder = true }, enabled = !scanning) {
+                    Icon(Icons.Rounded.Refresh, "Eski dosyaları bul")
                 }
                 IconButton(onClick = { ui.filesGrid = !grid }) { Icon(if (grid) Icons.Rounded.ViewList else Icons.Rounded.GridView, if (grid) "Liste görünümü" else "Izgara görünümü") }
             })
@@ -161,8 +174,7 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit, o
             if (needsAccess && !hideAccess && all != null && done.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }, key = "access") {
                 OldFilesCard(
                     modifier = Modifier.padding(horizontal = if (grid) 0.dp else 16.dp).padding(bottom = 12.dp),
-                    onAllow = { askMedia.launch(LibraryScan.mediaPermissions()) },
-                    onPickFolder = { pickFolder.launch(LibraryScan.defaultFolderHint(ctx)) },
+                    onFind = { finder = true },
                     onHide = { hideAccess = true },
                 )
             }
@@ -221,6 +233,17 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit, o
             }
         }
     }
+    if (finder) FindOldSheet(
+        folders = folders,
+        fullAccess = LibraryScan.hasFullMediaAccess(ctx),
+        scanning = scanning,
+        onDismiss = { finder = false },
+        onAllowAll = { finder = false; if (LibraryScan.hasFullMediaAccess(ctx)) rescan() else askMedia.launch(LibraryScan.mediaPermissions()) },
+        onAddFolder = { finder = false; pickFolder.launch(LibraryScan.defaultFolderHint(ctx)) },
+        onRemoveFolder = { LibraryScan.removeScanFolder(ctx, it); folders = LibraryScan.scanFolders(ctx); needsAccess = LibraryScan.needsAccess(ctx) },
+        onPickFiles = { finder = false; pickFiles.launch(arrayOf("video/*", "audio/*", "application/x-subrip", "text/*", "application/octet-stream")) },
+        onScan = { finder = false; rescan() },
+    )
     actions?.let { e -> FileActions(e, onDismiss = { actions = null }, onNew = onNew, onDetail = { actions = null; onOpenDetail(e.id) }, onDelete = deleteFile) }
 }
 
@@ -278,7 +301,7 @@ private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (Downlo
 
 /** Yeniden kurulumdan sonra eski indirmeleri görmek için izin isteyen kart. */
 @Composable
-private fun OldFilesCard(modifier: Modifier, onAllow: () -> Unit, onPickFolder: () -> Unit, onHide: () -> Unit) {
+private fun OldFilesCard(modifier: Modifier, onFind: () -> Unit, onHide: () -> Unit) {
     val c = MaterialTheme.colorScheme
     Column(modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.secondaryContainer).padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -287,13 +310,60 @@ private fun OldFilesCard(modifier: Modifier, onAllow: () -> Unit, onPickFolder: 
         }
         Text(
             "Uygulamayı silip yeniden kurduysan dosyalar İndirilenler/indirici içinde duruyor. Android onları göstermem için izin istiyor. " +
-                "Klasörü seçersen altyazılar da gelir, silme ve yeniden adlandırma da çalışır.",
+                "Tüm videolara, yalnızca bir klasöre ya da yalnızca seçtiğin dosyalara izin verebilirsin.",
             style = MaterialTheme.typography.bodyMedium, color = c.onSecondaryContainer, modifier = Modifier.padding(top = 8.dp, end = 8.dp),
         )
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
             TextButton(onClick = onHide) { Text("Gizle") }
-            TextButton(onClick = onPickFolder) { Text("Klasörü seç") }
-            Button(onClick = onAllow) { Text("İzin ver") }
+            Button(onClick = onFind) { Text("Eski dosyaları bul") }
+        }
+    }
+}
+
+/** Eski dosyaları bulmak için ne kadar izin verileceğini seçtiren sayfa. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FindOldSheet(
+    folders: List<android.net.Uri>, fullAccess: Boolean, scanning: Boolean,
+    onDismiss: () -> Unit, onAllowAll: () -> Unit, onAddFolder: () -> Unit, onRemoveFolder: (android.net.Uri) -> Unit,
+    onPickFiles: () -> Unit, onScan: () -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.surfaceContainerLow) {
+        Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
+            Text("Eski dosyaları bul", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp))
+            Text("Ne kadar izin vereceğini sen seç. indirici'nin indirdiği videolarda küçük bir işaret var; tanımak için ona bakarım.",
+                style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant, modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 8.dp))
+            FinderOption(Icons.Rounded.VideoLibrary, if (fullAccess) "Tüm videolar (izin verildi)" else "Tüm videolara izin ver",
+                "En kolayı. İndirilenler/indirici'deki her şey gelir; başka klasöre taşıdığın indirici videoları da işaretinden tanınır. Android 14'te izin penceresinde yalnızca seçtiklerine de izin verebilirsin.",
+                onAllowAll)
+            FinderOption(Icons.Rounded.FolderOpen, "Yalnızca bir klasöre izin ver",
+                "Sadece seçtiğin klasörü görürüm. indirici klasörünü seçersen içindeki her şey (altyazılar dahil) gelir; başka bir klasörde yalnızca indirici'nin indirdikleri alınır. Birden çok klasör ekleyebilirsin.",
+                onAddFolder)
+            folders.forEach { f ->
+                Row(Modifier.fillMaxWidth().padding(start = 64.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(LibraryScan.folderLabel(f), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = { onRemoveFolder(f) }) { Icon(Icons.Rounded.Close, "Klasörün iznini kaldır: ${LibraryScan.folderLabel(f)}") }
+                }
+            }
+            FinderOption(Icons.Rounded.FileOpen, "Yalnızca seçtiğim dosyalar",
+                "Dosyaları tek tek seçersin, yalnızca onlara erişirim. Videoyla birlikte altyazısını da seçersen eşleştiririm.",
+                onPickFiles)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
+                Button(onClick = onScan, enabled = !scanning) { Text(if (scanning) "Taranıyor…" else "Şimdi tara") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FinderOption(icon: ImageVector, title: String, body: String, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 12.dp)) {
+        Icon(icon, null, tint = c.primary, modifier = Modifier.padding(top = 2.dp))
+        Column(Modifier.padding(start = 16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(body, style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
         }
     }
 }

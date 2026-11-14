@@ -63,6 +63,19 @@ class Settings(context: Context) {
         get() = p.getString("folderUri", null)
         set(v) { p.edit().putString("folderUri", v).apply(); changed() }
 
+    /**
+     * İndirilen video/ses dosyalarının sonuna küçük bir indirici işareti (kaynak bağlantı, başlık) yazılsın mı.
+     * Yeniden kurulumdan sonra dosyalar bu işaretle tanınır, taşınmış olsalar da bulunur.
+     */
+    var tagFiles: Boolean
+        get() = p.getBoolean("tagFiles", true)
+        set(v) { p.edit().putBoolean("tagFiles", v).apply(); changed() }
+
+    /** Eski dosyaların aranacağı, kullanıcının izin verdiği ek klasörler (SAF ağaç URI'leri). */
+    var scanFolders: Set<String>
+        get() = p.getStringSet("scanFolders", emptySet())?.toSet() ?: emptySet()
+        set(v) { p.edit().putStringSet("scanFolders", v).apply(); changed() }
+
     var homePage: String
         get() = p.getString("homePage", "https://www.google.com") ?: "https://www.google.com"
         set(v) { p.edit().putString("homePage", v).apply(); changed() }

@@ -241,7 +241,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 ctx.segTotal = 1000; ctx.segDone = 0
                 val r = runMux(out, inputs(allAudio = !hasSepAudio, video = false), last = true)
                 report.append("birleştirme (yalnız ses):\n").append(r.notes).append('\n')
-                out.publish(app)
+                out.publish(app, e)
                 e.outputUri = out.encode(); e.fileName = name; merged = true
                 if (r.audioTracks == 0) { e.error = "Uyarı: kaynakta ses bulunamadı."; report.append(diag()).append('\n') }
             } catch (t: Throwable) {
@@ -267,7 +267,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                     ctx.phase = "Birleştiriliyor"
                 }
                 val audioTracks = if (r.audioMissing) 0 else r.audioTracks
-                out.publish(app)
+                out.publish(app, e)
                 e.outputUri = out.encode()
                 e.fileName = name
                 merged = true
@@ -289,7 +289,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 val aout = OutputStore.create(app, aname, "audio/mp4", folder)
                 try {
                     val r = runMux(aout, inputs(allAudio = usedAllAudio, video = false), last = true)
-                    if (r.audioTracks > 0) { aout.publish(app); extras += "${aout.encode()}|${Lang.audLabel(audioLang)}" } else aout.delete(app)
+                    if (r.audioTracks > 0) { aout.publish(app, e); extras += "${aout.encode()}|${Lang.audLabel(audioLang)}" } else aout.delete(app)
                 } catch (t: Throwable) {
                     aout.delete(app)
                     if (t is kotlinx.coroutines.CancellationException || t is java.util.concurrent.CancellationException) throw t
@@ -306,7 +306,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 val out = OutputStore.create(app, name, if (ext == "ts") "video/mp2t" else if (ext == "m4a") "audio/mp4" else "video/mp4", folder)
                 copyTo(f, out)
                 f.delete() // sıradaki akışın kopyası için yer açılır
-                out.publish(app)
+                out.publish(app, e)
                 if (p.role == "main") { e.outputUri = out.encode(); e.fileName = name } else extras += "${out.encode()}|${Lang.audLabel(p.lang)}"
             }
         }
