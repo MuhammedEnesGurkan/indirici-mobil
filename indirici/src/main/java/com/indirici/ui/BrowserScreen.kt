@@ -39,6 +39,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -141,6 +144,9 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
     val c = MaterialTheme.colorScheme
     var address by remember(tab.id, url, isHome) { mutableStateOf(if (isHome) "" else url) }
     var editing by remember { mutableStateOf(false) }
+    var field by remember { mutableStateOf(TextFieldValue("")) }
+    var selectAll by remember { mutableStateOf(false) }
+    LaunchedEffect(selectAll) { if (selectAll) { kotlinx.coroutines.delay(400); selectAll = false } }
     var menu by remember { mutableStateOf(false) }
     var showTabs by remember { mutableStateOf(false) }
     var showMedia by remember { mutableStateOf(false) }
@@ -190,16 +196,31 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
                 Icon(when { tab.incognito -> Icons.Rounded.VisibilityOff; !isHome && url.startsWith("https") && !editing -> Icons.Rounded.Lock; else -> Icons.Rounded.Search }, null,
                     tint = c.onSurfaceVariant, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
+                // İlk dokunuş adresin tamamını seçer (yazınca ya da silince hepsi gider); ikinci dokunuş imleci koyar
                 BasicTextField(
-                    value = if (editing || isHome) address else Format.host(url).removePrefix("www.") + url.substringAfter(Format.host(url), "").take(60),
-                    onValueChange = { address = it; editing = true },
+                    value = if (editing) field else TextFieldValue(if (isHome) "" else Format.host(url).removePrefix("www.") + url.substringAfter(Format.host(url), "").take(60)),
+                    onValueChange = { v ->
+                        if (editing) {
+                            // Odaklayan dokunuş imleci de taşır; seçimi o tek seferlik koru
+                            field = if (selectAll && v.text == field.text) v.copy(selection = TextRange(0, v.text.length)) else v
+                            selectAll = false
+                            address = field.text
+                        }
+                    },
                     singleLine = true, textStyle = MaterialTheme.typography.bodyLarge.copy(color = c.onSurface), cursorBrush = SolidColor(c.primary),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { if (address.isNotBlank()) { tab.load(address); editing = false; focus.clearFocus() } }),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).onFocusChanged { f ->
+                        if (f.isFocused && !editing) {
+                            address = if (isHome) "" else url
+                            field = TextFieldValue(address, TextRange(0, address.length))
+                            selectAll = address.isNotEmpty()
+                            editing = true
+                        } else if (!f.isFocused) editing = false
+                    },
                     decorationBox = { inner ->
                         Box(contentAlignment = Alignment.CenterStart) {
-                            if (address.isEmpty() && (editing || isHome)) Text(if (tab.incognito) "Gizli · ara ya da adres yaz" else "Ara ya da adres yaz", style = MaterialTheme.typography.bodyLarge, color = c.onSurfaceVariant)
+                            if ((editing && field.text.isEmpty()) || (!editing && isHome)) Text(if (tab.incognito) "Gizli · ara ya da adres yaz" else "Ara ya da adres yaz", style = MaterialTheme.typography.bodyLarge, color = c.onSurfaceVariant)
                             inner()
                         }
                     },
@@ -241,6 +262,8 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
             }
         }
     }
+    // Konum değişince düzen baştan kurulur (yoksa WebView eski yerinde kalıyor, değişiklik sekme değişene dek görünmüyordu)
+    androidx.compose.runtime.key(barTop) {
     Column(Modifier.fillMaxSize().background(c.surface)) {
         if (barTop) addressBar()
         Box(Modifier.weight(1f)) {
@@ -251,6 +274,7 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
             }
         }
         if (!barTop) addressBar()
+    }
     }
 
     fullscreen?.view?.let { v ->
