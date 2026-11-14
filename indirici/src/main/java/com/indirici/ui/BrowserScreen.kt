@@ -90,6 +90,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -112,6 +113,7 @@ import com.movietrack.app.browser.Detection
 import com.movietrack.app.browser.Tab
 import com.movietrack.app.browser.TabManager
 import com.movietrack.app.data.BookmarkEntity
+import com.movietrack.app.data.Status
 import com.movietrack.app.download.Analyzer
 import com.movietrack.app.download.Hls
 import com.movietrack.app.util.Format
@@ -184,7 +186,10 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
     val children = Detection.childToMaster(media)
     // YouTube videoları parça parça (uzantısız) aktığı için algılanmaz; video sayfasında doğrudan YouTube'a sorulur
     val ytPage = !isHome && com.movietrack.app.download.YouTube.id(url) != null
-    val count = if (ytPage) 1 else visible.count { it.url !in children }
+    // Daha önce indirilen (ya da kuyruktaki) bağlantılar yeni bulunmuş gibi sayılmaz
+    val allDownloads by App.instance.downloads.all.collectAsState(initial = emptyList())
+    val downloaded = remember(allDownloads) { allDownloads.filter { it.status != Status.ERROR }.mapTo(HashSet()) { it.url } }
+    val count = if (ytPage) 1 else visible.count { it.url !in children && it.url !in downloaded }
 
     // Adres çubuğu: varsayılan altta (tek elle erişim); Ayarlar › Tarayıcı'dan ya da menüden üste alınabilir
     val uiV by App.instance.ui.version.collectAsState()
@@ -284,7 +289,7 @@ private fun BrowserBody(tab: Tab, snack: SnackbarHostState, onDownload: (Downloa
     }
 
     if (showMedia) ModalBottomSheet(onDismissRequest = { showMedia = false }, containerColor = c.surfaceContainerLow) {
-        MediaList(media, title, url) { picked ->
+        MediaList(media, title, url, downloaded) { picked ->
             showMedia = false
             val masterUrl = children[picked.url]
             val m = masterUrl?.let { u -> media.firstOrNull { it.url == u } } ?: picked
@@ -389,20 +394,26 @@ private fun StartPage(incognito: Boolean, onOpen: (String) -> Unit) {
 }
 
 @Composable
-private fun MediaList(media: List<DetectedMedia>, pageTitle: String, pageUrl: String, onPick: (DetectedMedia) -> Unit) {
+private fun MediaList(media: List<DetectedMedia>, pageTitle: String, pageUrl: String, downloaded: Set<String>, onPick: (DetectedMedia) -> Unit) {
     val c = MaterialTheme.colorScheme
     val name = Analyzer.displayName(pageTitle, pageUrl)
     var showAds by remember { mutableStateOf(false) }
     val longest = media.maxOfOrNull { it.duration } ?: 0.0
     val isAd = { m: DetectedMedia -> m.isAd || (m.duration in 0.1..59.0 && longest > 300) }
     val children = Detection.childToMaster(media)
-    val main = media.filter { !isAd(it) && it.url !in children }.sortedWith(compareByDescending<DetectedMedia> { it.kind == "hls" || it.kind == "dash" }.thenByDescending { it.duration })
+    val main = media.filter { !isAd(it) && it.url !in children }
+        .sortedWith(compareBy<DetectedMedia> { it.url in downloaded }.thenByDescending { it.kind == "hls" || it.kind == "dash" }.thenByDescending { it.duration })
     val ads = media.filter(isAd)
     val subsList = main.filter { it.kind == "subtitle" }
     val videos = main - subsList.toSet()
+    val fresh = videos.count { it.url !in downloaded }
     Column(Modifier.padding(bottom = 24.dp)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 12.dp)) {
-            Text(if (videos.isNotEmpty()) "${videos.size} medya bulundu" else "Henüz medya yok", style = MaterialTheme.typography.titleLarge)
+            Text(when {
+                fresh > 0 -> "$fresh medya bulundu"
+                videos.isNotEmpty() -> "Bulunanlar zaten indirildi"
+                else -> "Henüz medya yok"
+            }, style = MaterialTheme.typography.titleLarge)
             Text(listOf(name, Format.host(pageUrl)).filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (videos.isEmpty() && subsList.isEmpty()) Text("Videoyu oynatmayı dene; akışlar ve dosyalar oynatma başlayınca burada listelenir.",
@@ -410,7 +421,8 @@ private fun MediaList(media: List<DetectedMedia>, pageTitle: String, pageUrl: St
         LazyColumn(contentPadding = PaddingValues(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(videos.size, key = { videos[it].url }) { i ->
                 val m = videos[i]
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.surfaceContainer).clickable { onPick(m) }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                val done = m.url in downloaded
+                Row(Modifier.fillMaxWidth().alpha(if (done) 0.6f else 1f).clip(RoundedCornerShape(16.dp)).background(c.surfaceContainer).clickable { onPick(m) }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.width(72.dp).aspectRatio(16f / 10f).clip(RoundedCornerShape(10.dp)).background(c.primaryContainer), contentAlignment = Alignment.Center) {
                         Icon(Icons.Rounded.Movie, null, tint = c.onPrimaryContainer)
                         if (m.duration > 0) Text(Format.duration(m.duration.toLong()), style = MaterialTheme.typography.labelSmall, color = Color.White,
@@ -419,7 +431,7 @@ private fun MediaList(media: List<DetectedMedia>, pageTitle: String, pageUrl: St
                     Column(Modifier.weight(1f).padding(start = 12.dp)) {
                         Text(if (name.isNotBlank()) (name + (if (videos.size > 1) " · Kaynak ${i + 1}" else "")) else Format.fileNameFromUrl(m.url),
                             style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(sourceDesc(m) + if ((m.kind == "hls" || m.kind == "dash") && subsList.isNotEmpty()) " · +${subsList.size} altyazı" else "",
+                        Text((if (done) "İndirildi · " else "") + sourceDesc(m) + if ((m.kind == "hls" || m.kind == "dash") && subsList.isNotEmpty()) " · +${subsList.size} altyazı" else "",
                             style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Icon(Icons.Rounded.Download, null, tint = c.primary, modifier = Modifier.padding(horizontal = 12.dp))

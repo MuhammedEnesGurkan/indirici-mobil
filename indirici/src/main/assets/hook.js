@@ -102,4 +102,18 @@
     document.addEventListener(ev, (e) => { if (e.target && /^(VIDEO|AUDIO)$/.test(e.target.tagName)) setTimeout(scan, 300); }, true);
   }
   document.addEventListener('DOMContentLoaded', () => setTimeout(scan, 500));
+  // SPA geçişinde (sayfa yenilenmeden sonraki bölüm) uygulama listeyi temizler; hâlâ sayfadaki oynatıcı yeniden bildirilsin
+  let lastPage = location.href.split('#')[0];
+  const onNav = () => {
+    const now = location.href.split('#')[0];
+    if (now === lastPage) return;
+    lastPage = now;
+    seen.clear();
+    setTimeout(scan, 800);
+  };
+  for (const fn of ['pushState', 'replaceState']) {
+    const orig = history[fn];
+    if (typeof orig === 'function') history[fn] = function (...a) { const r = orig.apply(this, a); try { onNav(); } catch (e) {} return r; };
+  }
+  window.addEventListener('popstate', onNav);
 })();
