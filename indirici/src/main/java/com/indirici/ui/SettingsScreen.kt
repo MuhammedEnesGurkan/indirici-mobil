@@ -222,6 +222,8 @@ private fun SwitchItem(title: String, sub: String?, value: Boolean, enabled: Boo
 @Composable
 private fun GeneralPage() {
     val s = App.instance.settings
+    val ver by s.version.collectAsState()
+    ver.hashCode() // seçimler değişince sayfa yeniden çizilsin
     Section("Pano") {
         SwitchItem("Panodaki bağlantıyı algıla", "Bir bağlantı kopyaladığında indirmeyi önerir", s.clipboardDetect) { s.clipboardDetect = it }
     }
@@ -234,6 +236,22 @@ private fun GeneralPage() {
                 steps.forEachIndexed { i, sec ->
                     SegmentedButton(selected = s.seekStepSec == sec, onClick = { s.seekStepSec = sec }, shape = SegmentedButtonDefaults.itemShape(i, steps.size)) { Text("$sec sn") }
                 }
+            }
+        }
+        GestureSideItem("Sol tarafta yukarı/aşağı kaydırma", s.gestureLeft) { s.gestureLeft = it }
+        GestureSideItem("Sağ tarafta yukarı/aşağı kaydırma", s.gestureRight) { s.gestureRight = it }
+    }
+}
+
+@Composable
+private fun GestureSideItem(title: String, value: String, onChange: (String) -> Unit) {
+    val options = listOf("brightness" to "Parlaklık", "volume" to "Ses", "none" to "Kapalı")
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp)) {
+        Text(title, style = MaterialTheme.typography.labelLarge)
+        Text("MX Player'daki gibi: ekranın o yarısında parmağını kaydırınca ne değişsin", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+            options.forEachIndexed { i, (key, label) ->
+                SegmentedButton(selected = value == key, onClick = { onChange(key) }, shape = SegmentedButtonDefaults.itemShape(i, options.size)) { Text(label) }
             }
         }
     }
