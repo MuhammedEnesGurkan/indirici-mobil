@@ -36,6 +36,9 @@ sealed class BrowserEvent {
     data class Fullscreen(val view: View?, val callback: WebChromeClient.CustomViewCallback?) : BrowserEvent()
 }
 
+/** Sayfa kimliği: adres parçası (#...) aynı sayfa sayılır. */
+internal fun pageKey(url: String) = url.substringBefore('#')
+
 class Tab(val id: Long, val incognito: Boolean, context: Context) {
     val title = MutableStateFlow(if (incognito) "Gizli sekme" else "Yeni sekme")
     val url = MutableStateFlow("")
@@ -44,9 +47,27 @@ class Tab(val id: Long, val incognito: Boolean, context: Context) {
     val isHome = MutableStateFlow(true)
     @Volatile var currentUrl = ""
     @Volatile var playerDuration = 0.0
+    /** Bir önceki sayfanın adresi: geçişten sonra eski sayfadan gecikmeli gelen bildirimler listeye eklenmez. */
+    @Volatile var previousUrl = ""
     val webView: WebView = WebView(context)
 
+    /**
+     * Sayfa değişti (tam yükleme ya da SPA adres değişimi): önceki bölümün bağlantıları listede kalmasın.
+     * [keepRecentMs] içinde bulunanlar korunur; SPA'larda yeni bölümün akışı adres değişmeden hemen önce yüklenebilir.
+     */
+    fun resetMedia(newUrl: String, keepRecentMs: Long = 0) {
+        if (currentUrl.isNotEmpty() && pageKey(currentUrl) != pageKey(newUrl)) previousUrl = currentUrl
+        playerDuration = 0.0
+        if (keepRecentMs <= 0) media.value = emptyList()
+        else {
+            val since = System.currentTimeMillis() - keepRecentMs
+            media.update { list -> list.filter { it.detectedAt >= since } }
+        }
+    }
+
     fun addMedia(m: DetectedMedia) {
+        // Önceki sayfadan geç gelen istek/bildirim (ör. eski oynatıcının son isteği)
+        if (previousUrl.isNotEmpty() && m.referer == previousUrl && pageKey(previousUrl) != pageKey(currentUrl)) return
         media.update { list ->
             if (list.any { it.url == m.url }) {
                 list.map { if (it.url == m.url) it.copy(duration = maxOf(it.duration, m.duration), manifestText = it.manifestText ?: m.manifestText) else it }
@@ -213,11 +234,10 @@ object TabManager {
             }
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                tab.resetMedia(url)
                 tab.currentUrl = url
                 tab.url.value = url
                 tab.isHome.value = false
-                tab.media.value = emptyList()
-                tab.playerDuration = 0.0
                 if (!docStart) view.evaluateJavascript(hookJs, null)
             }
 
@@ -231,6 +251,8 @@ object TabManager {
             }
 
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                // SPA geçişi (pushState/replaceState, sayfa yeniden yüklenmeden sonraki bölüme geçiş): eski bağlantıları temizle
+                if (!isReload && tab.currentUrl.isNotEmpty() && pageKey(url) != pageKey(tab.currentUrl)) tab.resetMedia(url, keepRecentMs = 1500)
                 tab.currentUrl = url
                 tab.url.value = url
             }
