@@ -51,6 +51,8 @@ class DownloadE2ETest {
     private val run = System.currentTimeMillis().toString(36)
 
     private val busyHits = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    private val slowHits = java.util.concurrent.atomic.AtomicInteger(0)
     private fun asset(p: String): ByteArray? = try { assets.open("fx/$p").use { it.readBytes() } } catch (_: Exception) { null }
 
     @Before
@@ -88,6 +90,13 @@ class DownloadE2ETest {
                         if (c <= 7) return MockResponse().setResponseCode(429)
                     }
                     return ok(asset("ts/$n") ?: return MockResponse().setResponseCode(404), if (n.endsWith(".m3u8")) "application/vnd.apple.mpegurl" else "video/mp2t", request)
+                }
+                // Ortadaki parçası ilk istekte geç gelen yayın (duraklat/sürdür sırasında birleştirme testi)
+                if (path.startsWith("pr/")) {
+                    val n = path.removePrefix("pr/")
+                    val r = ok(asset("ts/$n") ?: return MockResponse().setResponseCode(404), if (n.endsWith(".m3u8")) "application/vnd.apple.mpegurl" else "video/mp2t", request)
+                    if (n == "s1.ts" && slowHits.incrementAndGet() == 1) r.setHeadersDelay(6, java.util.concurrent.TimeUnit.SECONDS)
+                    return r
                 }
                 // İlk parçası çok yavaş gelen büyük dosya (dinamik bölme testi)
                 if (path == "slowfirst/big.bin") {
@@ -196,6 +205,38 @@ class DownloadE2ETest {
             }
         }
         assertTrue("$what: süre ${p.durationSec}s", p.durationSec in 5.0..7.5)
+        // Parçalar indirme sırasında birleştirilmiş olmalı (indirme bitince bekleme olmasın)
+        st["diag"]?.let { d ->
+            Regex("\\((\\d+) / (\\d+) parça indirme sırasında eklendi\\)").find(d)?.let { m ->
+                assertTrue("$what: indirirken birleştirme çalışmadı: ${m.value}", m.groupValues[1].toInt() > 0)
+            }
+        }
+    }
+
+    @Test
+    fun joinsWhileDownloadingAcrossPauseAndResume() = runBlocking {
+        val u = url("pr/index.m3u8")
+        val i = analyze(u)
+        val req = Requests.build(i, u, "test-pauseresume-$run", "Test", i.qualities.first().id, emptyList(), emptyList(), "mp4")
+        val id = app.downloads.add(req)
+        val dao = app.db.downloads()
+        // s0 ve s2 iner, s1 sunucuda bekler: bu sırada duraklat
+        delay(2500)
+        assertTrue("erken bitti: ${dao.get(id)?.status}", dao.get(id)!!.status != Status.DONE)
+        app.downloads.pause(id).join()
+        val dir = java.io.File(app.filesDir, "streams/$id")
+        val pos = java.io.File(dir, "stream_0.pos")
+        assertTrue("birleştirme durumu kaydedilmedi: ${dir.list()?.toList()}", pos.exists())
+        android.util.Log.i("JoinTest", "duraklatıldı, durum: ${pos.readText().replace("\n", " | ")}")
+        app.downloads.resume(id).join()
+        val deadline = System.currentTimeMillis() + 90_000
+        var e = dao.get(id)!!
+        while (System.currentTimeMillis() < deadline && e.status != Status.DONE) {
+            if (e.status == Status.ERROR) fail("sürdürülemedi: ${e.error}")
+            delay(300); e = dao.get(id)!!
+        }
+        assertEquals(Status.DONE, e.status)
+        assertPlayable(e, "Duraklat/sürdür sırasında birleştirme")
     }
 
     @Test

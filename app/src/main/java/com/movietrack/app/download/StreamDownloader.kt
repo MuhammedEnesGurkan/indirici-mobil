@@ -50,6 +50,14 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         e.downloadedBytes = tasks.sumOf { segFile(it.first, it.second).let { f -> if (f.exists()) f.length() else 0L } }
         ctx.phase = "İndiriliyor"
 
+        // Init segmentleri (fMP4): parçalar indikçe birleştirilebilsin diye önce alınır
+        for ((si, p) in plans.withIndex()) for (m in p.segments.mapNotNull { it.map }.distinct()) {
+            val f = initFile(si, m)
+            if (!f.exists()) { val seg = p.segments.first { it.map == m }; f.writeBytes(Http.bytes(e, m, seg.mapRange)) }
+        }
+        // İndirirken birleştirme: sıradaki parçalar indikçe akış dosyasına eklenir; indirme bitince bu adım beklenmez
+        val joiners = plans.mapIndexed { si, p -> Joiner(si, p, skipAds) }
+
         // 1) Segmentler (paralel). Sunucu "çok fazla istek" (429/503) derse durmaz: bağlantı sayısı yarıya
         // iner, beklenir, aynı parça yeniden denenir; bir süre sorunsuz gidince bağlantılar geri artar.
         val next = AtomicInteger(0)
@@ -81,7 +89,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                 }
             }
         }
-        coroutineScope {
+        try { coroutineScope {
             repeat(workers) { w ->
                 launch {
                     while (true) {
@@ -97,6 +105,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                         val tmp = File(f.path + ".part")
                         tmp.writeBytes(data)
                         tmp.renameTo(f)
+                        try { joiners[si].advance(false) } catch (_: java.io.IOException) {}
                         ctx.segDone++
                         if (ctx.segDone > 2 && e.type != "youtube") e.totalBytes = e.downloadedBytes * ctx.segTotal / ctx.segDone
                         // 8 sn sorunsuz: bir bağlantı geri
@@ -108,13 +117,7 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
                     }
                 }
             }
-        }
-        ctx.phase = "İndiriliyor"
-        // Init segmentleri (fMP4)
-        for ((si, p) in plans.withIndex()) for (m in p.segments.mapNotNull { it.map }.distinct()) {
-            val f = initFile(si, m)
-            if (!f.exists()) { val seg = p.segments.first { it.map == m }; f.writeBytes(Http.bytes(e, m, seg.mapRange)) }
-        }
+        } } catch (t: Throwable) { joiners.forEach { it.close() }; throw t }
 
         // 2) Akış dosyaları
         ctx.phase = "Birleştiriliyor"
@@ -124,11 +127,14 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         e.status = com.movietrack.app.data.Status.MERGING
         ctx.saveNow()
         val t0 = System.nanoTime()
-        val streamFiles = plans.mapIndexed { si, p -> concat(si, p, skipAds) }
+        val early = joiners.sumOf { it.joined }
+        val streamFiles = try {
+            joiners.map { j -> try { j.finish() } catch (x: java.io.IOException) { j.close(); concat(j.si, j.p, skipAds) } }
+        } finally { joiners.forEach { it.close() } }
         val concatMs = (System.nanoTime() - t0) / 1_000_000
         val streamBytes = streamFiles.sumOf { it.length() }
         val throttleNote = "indirme: $workers bağlantı, sunucu ${throttles.get()} kez 'çok fazla istek' dedi, en az ${minAllowed.get()} bağlantıya inildi\n"
-        val timings = StringBuilder("hız: parça birleştirme ${speedOf(streamBytes, concatMs)}")
+        val timings = StringBuilder("hız: parça birleştirme ${speedOf(streamBytes, concatMs)} (${early} / ${tasks.size} parça indirme sırasında eklendi)")
 
         // 3) Çıktı
         val base = meta["base"]?.takeIf { it.isNotBlank() } ?: e.fileName.substringBeforeLast('.')
@@ -391,6 +397,92 @@ class StreamDownloader(private val app: App, private val ctx: JobContext) {
         val c = Cipher.getInstance("AES/CBC/PKCS5Padding")
         c.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
         return c.doFinal(data)
+    }
+
+    /**
+     * İndirirken birleştirme: bir akışın parçaları sırayla indikçe akış dosyasının sonuna eklenir.
+     * Durum (kaçıncı parçaya gelindiği ve dosya boyu) yanındaki .pos dosyasında tutulur; indirme
+     * duraklatılıp sürdürülünce kaldığı yerden devam eder. Tutarsızlıkta baştan kurulur.
+     * Parça dosyaları silinmez: sürdürme ve yedek birleştirme (concat) eskisi gibi çalışır.
+     */
+    private inner class Joiner(val si: Int, val p: Plan, private val skipAds: Boolean) {
+        val file = File(dir, "stream_$si.${if (p.fmp4) "mp4" else "ts"}")
+        private val posFile = File(dir, "stream_$si.pos")
+        private val sig = "${p.segments.size}|$skipAds|${p.fmp4}"
+        private val lock = java.util.concurrent.locks.ReentrantLock()
+        private var os: FileOutputStream? = null
+        private var next = 0
+        private var lastMap: String? = null
+        private var failed = false
+        /** İndirme sırasında eklenen parça sayısı (tanı raporu için) */
+        @Volatile var joined = 0; private set
+
+        private fun open() {
+            if (os != null) return
+            var ok = false
+            try {
+                val st = posFile.takeIf { it.exists() }?.readText()?.split('\n')
+                if (st != null && st.size >= 4 && st[0] == sig && file.exists() && file.length() >= st[2].toLong()) {
+                    java.io.RandomAccessFile(file, "rw").use { it.setLength(st[2].toLong()) }
+                    next = st[1].toInt(); lastMap = st[3].ifEmpty { null }; ok = true
+                }
+            } catch (_: Exception) {}
+            if (!ok) { next = 0; lastMap = null; file.delete(); posFile.delete() }
+            os = FileOutputStream(file, true)
+        }
+
+        private fun save() {
+            os?.flush()
+            val tmp = File(posFile.path + ".tmp")
+            tmp.writeText("$sig\n$next\n${file.length()}\n${lastMap ?: ""}")
+            tmp.renameTo(posFile)
+        }
+
+        /** @param all true: eksik parça atlanır ve sona kadar gidilir (indirme bitti); false: ilk eksikte durur */
+        private fun run(all: Boolean, active: () -> Boolean) {
+            open()
+            val out = os!!
+            var wrote = false
+            while (next < p.segments.size && active()) {
+                val seg = p.segments[next]
+                if (!(skipAds && seg.isAd)) {
+                    val f = segFile(si, next)
+                    if (!f.exists()) { if (all) { next++; continue } else break }
+                    if (seg.map != null && seg.map != lastMap) { initFile(si, seg.map).let { if (it.exists()) out.write(it.readBytes()) }; lastMap = seg.map }
+                    FileInputStream(f).use { ins ->
+                        // Ham ses parçaları (.aac/.mp3) başında ID3 etiketi taşır; ortadakiler okuyucuyu durdurur
+                        if (!p.fmp4) skipId3(ins, f.length())
+                        ins.copyTo(out, 1 shl 20)
+                    }
+                    wrote = true
+                    if (!all) joined++
+                }
+                next++
+            }
+            if (wrote || all) save()
+        }
+
+        /** İndirme işçileri her parçadan sonra çağırır; başka bir işçi zaten ekliyorsa beklemeden döner. */
+        fun advance(all: Boolean) {
+            if (failed || !lock.tryLock()) return
+            try { run(all) { true } } catch (x: java.io.IOException) { failed = true; throw x } finally { lock.unlock() }
+        }
+
+        /** İndirme bitince kalanları ekler ve akış dosyasını verir. */
+        suspend fun finish(): File {
+            val job = coroutineContext[kotlinx.coroutines.Job]
+            if (failed) throw java.io.IOException("joiner")
+            lock.lock()
+            try { run(true) { job?.isActive != false } } finally { lock.unlock() }
+            coroutineContext.ensureActive()
+            close()
+            return file
+        }
+
+        fun close() {
+            lock.lock()
+            try { try { os?.close() } catch (_: Exception) {}; os = null } finally { lock.unlock() }
+        }
     }
 
     private suspend fun concat(si: Int, p: Plan, skipAds: Boolean): File {
