@@ -270,6 +270,7 @@ private fun DownloadsPage() {
         Item("Varsayılan klasör", if (s.folderUri != null) "Seçilen klasör" else "İndirilenler/indirici", onClick = { pick.launch(null) }) {
             if (s.folderUri != null) TextButton(onClick = { s.folderUri = null }) { Text("Varsayılan") } else Icon(Icons.Rounded.ChevronRight, null)
         }
+        SwitchItem("İndirdiğim videoları işaretle", "Video/ses dosyasının sonuna küçük bir indirici işareti (bağlantı ve başlık) eklenir. Uygulamayı silip yeniden kurunca dosyalar, taşınmış olsalar da bundan tanınır.", s.tagFiles) { s.tagFiles = it }
     }
     Section("Hız ve bağlantı") {
         Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp)) {

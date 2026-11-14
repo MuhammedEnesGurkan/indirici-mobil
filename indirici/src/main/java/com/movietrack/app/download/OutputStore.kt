@@ -24,7 +24,9 @@ class OutputFile(val uri: Uri, private val pending: Boolean) {
     fun openRw(ctx: Context): ParcelFileDescriptor =
         ctx.contentResolver.openFileDescriptor(uri, "rw") ?: error("Dosya açılamadı: $uri")
 
-    fun publish(ctx: Context) {
+    /** @param tag verilirse video/ses dosyasının sonuna indirici işareti yazılır (bkz. [FileTag]) */
+    fun publish(ctx: Context, tag: com.movietrack.app.data.DownloadEntity? = null) {
+        if (tag != null && App.instance.settings.tagFiles) FileTag.write(ctx, uri, tag)
         if (pending && Build.VERSION.SDK_INT >= 29) {
             val v = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
             ctx.contentResolver.update(uri, v, null, null)

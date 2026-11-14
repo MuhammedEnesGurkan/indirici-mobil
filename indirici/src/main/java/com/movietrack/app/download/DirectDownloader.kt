@@ -99,7 +99,7 @@ class DirectDownloader(private val app: App, private val ctx: JobContext) {
             }
         }
         e.parts = encode(parts)
-        out.publish(app)
+        out.publish(app) // doğrudan indirme sunucudaki dosyanın birebir kopyası kalır: işaret yazılmaz
     }
 
     private companion object { const val MIN_SPLIT = 1L shl 20 }
