@@ -36,7 +36,9 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.ViewList
@@ -75,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import com.movietrack.app.App
 import com.movietrack.app.data.DownloadEntity
 import com.movietrack.app.data.Status
+import com.movietrack.app.download.LibraryScan
 import com.movietrack.app.download.OutputStore
 import com.movietrack.app.util.Category
 import com.movietrack.app.util.Format
@@ -98,6 +101,46 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit, o
         when (sort) { 1 -> l.sortedBy { it.fileName.lowercase() }; 2 -> l.sortedByDescending { it.totalBytes }; else -> l.sortedByDescending { it.finishedAt.takeIf { f -> f > 0 } ?: it.createdAt } }
     }
     val grid = ui.filesGrid
+    var needsAccess by remember { mutableStateOf(LibraryScan.needsAccess(ctx)) }
+    var hideAccess by remember { mutableStateOf(false) }
+    var scanning by remember { mutableStateOf(false) }
+    fun rescan() {
+        if (scanning) return
+        scanning = true
+        LibraryScan.scanAsync(ctx) { n ->
+            scanning = false
+            needsAccess = LibraryScan.needsAccess(ctx)
+            android.widget.Toast.makeText(ctx, if (n > 0) "$n eski dosya listeye eklendi" else "Klasörde listede olmayan dosya bulunamadı", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    val askMedia = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) { r ->
+        if (r.values.any { it }) rescan()
+        else android.widget.Toast.makeText(ctx, "İzin verilmedi. Klasörü seçerek de erişim verebilirsin.", android.widget.Toast.LENGTH_LONG).show()
+    }
+    val pickFolder = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        try { ctx.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (_: Exception) {}
+        // Seçilen klasör hem tarama hem de yeni indirmelerin yeri olur (aynı klasör: davranış değişmez)
+        App.instance.settings.folderUri = uri.toString()
+        rescan()
+    }
+    // Eski kurulumdan kalan dosyalar artık bu uygulamanın değil: Android 11+ silmek için sistemin onayını ister
+    var pendingDelete by remember { mutableStateOf<DownloadEntity?>(null) }
+    val askDelete = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()) { r ->
+        val e = pendingDelete
+        pendingDelete = null
+        if (r.resultCode == android.app.Activity.RESULT_OK && e != null) App.instance.downloads.remove(e.id, false)
+    }
+    val deleteFile: (DownloadEntity) -> Unit = { e ->
+        val uris = (listOf(e.outputUri) + e.extraOutputs.lines().map { it.substringBeforeLast('|') })
+            .mapNotNull { com.movietrack.app.download.OutputFile.decode(it)?.uri }
+            .filter { it.authority == android.provider.MediaStore.AUTHORITY }
+        if (android.os.Build.VERSION.SDK_INT >= 30 && com.movietrack.app.util.KV.decode(e.meta)["imported"] == "1" && uris.isNotEmpty()) {
+            pendingDelete = e
+            val sender = android.provider.MediaStore.createDeleteRequest(ctx.contentResolver, uris).intentSender
+            askDelete.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build())
+        } else App.instance.downloads.remove(e.id, true)
+    }
 
     Scaffold(
         modifier = Modifier.nestedScroll(bar.nestedScrollConnection),
@@ -105,6 +148,9 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit, o
         bottomBar = { MiniPlayerBar() },
         topBar = {
             LargeTopAppBar(title = { Text("Dosyalar") }, scrollBehavior = bar, actions = {
+                IconButton(onClick = { if (needsAccess) askMedia.launch(LibraryScan.mediaPermissions()) else rescan() }, enabled = !scanning) {
+                    Icon(Icons.Rounded.Refresh, "Klasörü tara: listede olmayan dosyaları ekle")
+                }
                 IconButton(onClick = { ui.filesGrid = !grid }) { Icon(if (grid) Icons.Rounded.ViewList else Icons.Rounded.GridView, if (grid) "Liste görünümü" else "Izgara görünümü") }
             })
         },
@@ -112,6 +158,14 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit, o
         LazyVerticalGrid(GridCells.Fixed(if (grid) 2 else 1), Modifier.fillMaxSize().padding(pad),
             contentPadding = PaddingValues(start = if (grid) 16.dp else 0.dp, end = if (grid) 16.dp else 0.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(if (grid) 10.dp else 0.dp)) {
+            if (needsAccess && !hideAccess && all != null && done.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }, key = "access") {
+                OldFilesCard(
+                    modifier = Modifier.padding(horizontal = if (grid) 0.dp else 16.dp).padding(bottom = 12.dp),
+                    onAllow = { askMedia.launch(LibraryScan.mediaPermissions()) },
+                    onPickFolder = { pickFolder.launch(LibraryScan.defaultFolderHint(ctx)) },
+                    onHide = { hideAccess = true },
+                )
+            }
             item(span = { GridItemSpan(maxLineSpan) }, key = "cats") {
                 val cats = Category.ALL.mapNotNull { k -> done.filter { categoryOf(it) == k }.takeIf { it.isNotEmpty() }?.let { k to it } }
                 LazyRow(contentPadding = PaddingValues(horizontal = if (grid) 0.dp else 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -167,12 +221,12 @@ fun FilesScreen(onNew: (DownloadRequest) -> Unit, onOpenDownloads: () -> Unit, o
             }
         }
     }
-    actions?.let { e -> FileActions(e, onDismiss = { actions = null }, onNew = onNew, onDetail = { actions = null; onOpenDetail(e.id) }) }
+    actions?.let { e -> FileActions(e, onDismiss = { actions = null }, onNew = onNew, onDetail = { actions = null; onOpenDetail(e.id) }, onDelete = deleteFile) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (DownloadRequest) -> Unit, onDetail: () -> Unit = {}) {
+private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (DownloadRequest) -> Unit, onDetail: () -> Unit = {}, onDelete: (DownloadEntity) -> Unit) {
     val ctx = LocalContext.current
     val c = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
@@ -194,9 +248,9 @@ private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (Downlo
             ActionRow(Icons.Rounded.Share, "Paylaş") { onDismiss(); Open.share(ctx, e) }
             ActionRow(Icons.Rounded.Info, "Ayrıntılar") { onDetail() }
             ActionRow(Icons.Rounded.Edit, "Yeniden adlandır") { rename = true }
-            ActionRow(Icons.Rounded.ContentCopy, "Bağlantıyı kopyala") { onDismiss(); copyText(ctx, e.url) }
+            if (e.url.isNotBlank()) ActionRow(Icons.Rounded.ContentCopy, "Bağlantıyı kopyala") { onDismiss(); copyText(ctx, e.url) }
             ActionRow(Icons.Rounded.ContentCopy, "Tanı raporunu kopyala") { onDismiss(); copyText(ctx, diagnosticReport(e)) }
-            ActionRow(Icons.Rounded.Replay, "Tekrar indir") { onDismiss(); onNew(DownloadRequest(e.url, referer = e.referer, pageTitle = e.title, userAgent = e.userAgent)) }
+            if (e.url.isNotBlank()) ActionRow(Icons.Rounded.Replay, "Tekrar indir") { onDismiss(); onNew(DownloadRequest(e.url, referer = e.referer, pageTitle = e.title, userAgent = e.userAgent)) }
             ActionRow(Icons.Rounded.Delete, "Sil", tint = c.error) { confirm = true }
         }
     }
@@ -218,8 +272,30 @@ private fun FileActions(e: DownloadEntity, onDismiss: () -> Unit, onNew: (Downlo
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, icon = { Icon(Icons.Rounded.Delete, null) },
         title = { Text("Dosya silinsin mi?") }, text = { Text("${e.fileName} cihazından silinecek.") },
-        confirmButton = { Button(onClick = { confirm = false; App.instance.downloads.remove(e.id, true); onDismiss() }, colors = ButtonDefaults.buttonColors(c.error, c.onError)) { Text("Sil") } },
+        confirmButton = { Button(onClick = { confirm = false; onDelete(e); onDismiss() }, colors = ButtonDefaults.buttonColors(c.error, c.onError)) { Text("Sil") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("Vazgeç") } })
+}
+
+/** Yeniden kurulumdan sonra eski indirmeleri görmek için izin isteyen kart. */
+@Composable
+private fun OldFilesCard(modifier: Modifier, onAllow: () -> Unit, onPickFolder: () -> Unit, onHide: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.secondaryContainer).padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.History, null, tint = c.onSecondaryContainer)
+            Text("Eski indirmelerin görünmüyor mu?", style = MaterialTheme.typography.titleSmall, color = c.onSecondaryContainer, modifier = Modifier.padding(start = 12.dp))
+        }
+        Text(
+            "Uygulamayı silip yeniden kurduysan dosyalar İndirilenler/indirici içinde duruyor. Android onları göstermem için izin istiyor. " +
+                "Klasörü seçersen altyazılar da gelir, silme ve yeniden adlandırma da çalışır.",
+            style = MaterialTheme.typography.bodyMedium, color = c.onSecondaryContainer, modifier = Modifier.padding(top = 8.dp, end = 8.dp),
+        )
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onHide) { Text("Gizle") }
+            TextButton(onClick = onPickFolder) { Text("Klasörü seç") }
+            Button(onClick = onAllow) { Text("İzin ver") }
+        }
+    }
 }
 
 @Composable
