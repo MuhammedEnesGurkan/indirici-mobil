@@ -5,9 +5,8 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-// indirici: Movie Track'in indirme motorunu (download, data, browser, util, player) paylaşan,
-// arayüzü baştan yazılmış ayrı uygulama. Arka uç kodu ../app altında tek kopya olarak durur.
-val shared = "../app/src/main/java/com/movietrack/app"
+// indirici: indirme motoru (download, data, browser, util, player) com.movietrack.app paketinde,
+// arayüz com.indirici paketinde. Yazılımsal ses çözücü ../ffmpeg-audio altında.
 
 android {
     namespace = "com.movietrack.app" // arka uçtaki R / BuildConfig başvuruları için
@@ -17,13 +16,13 @@ android {
         applicationId = "com.indirici.app"
         minSdk = 26
         targetSdk = 35
-        val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt() + 100 // eski repodaki 1.0.51'in üstünden devam (güncelleme olarak kurulabilsin)
         versionCode = run
         versionName = "1.0.$run"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets["main"].apply {
-        java.srcDirs("$shared/download", "$shared/data", "$shared/browser", "$shared/util", "$shared/player", "../ffmpeg-audio/java")
-        assets.srcDirs("../app/src/main/assets", "src/main/assets")
+        java.srcDirs("../ffmpeg-audio/java")
     }
     buildTypes {
         release {
@@ -41,6 +40,7 @@ android {
         buildConfig = true
     }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
+    testOptions { unitTests.isReturnDefaultValues = true }
 }
 
 dependencies {
@@ -68,4 +68,11 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
